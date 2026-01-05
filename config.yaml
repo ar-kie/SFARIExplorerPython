@@ -1,0 +1,97 @@
+# SFARI Gene Expression Explorer - Configuration
+# Use this file with: python prepare_data.py --config config.yaml
+
+output_dir: "./data"
+
+# Ortholog mapping file (optional)
+# Expected format: CSV with columns 'species', 'gene_native', 'gene_human'
+ortholog_map_path: null  # Set to path like "./ortholog_map.csv"
+
+# SFARI risk genes file
+risk_genes_path: "./SFARI-Gene_genes.csv"
+
+# Dataset configurations
+datasets:
+  # Human datasets
+  - path: "/path/to/HNOCA.h5ad"
+    name: "He (2024)"
+    species: "Human"
+    cell_type_col: "supercategories"
+    timepoint_col: "age"  # or null if not available
+    gene_col: "var_names"
+    layer: null  # Use .X
+    
+  - path: "/path/to/Bhaduri_2021.h5ad"
+    name: "Bhaduri (2021)"
+    species: "Human"
+    cell_type_col: "cell_type"
+    timepoint_col: "gestational_week"
+    gene_col: "var_names"
+    # Custom timepoint mapping
+    timepoint_mapping:
+      "GW5": 0.05
+      "GW6": 0.07
+      "GW7": 0.09
+      "GW8": 0.11
+      "GW9": 0.13
+      "GW10": 0.15
+
+  - path: "/path/to/Braun_2023.h5ad"
+    name: "Braun (2023)"
+    species: "Human"
+    cell_type_col: "cell_type"
+    timepoint_col: null
+    gene_col: "var_names"
+
+  - path: "/path/to/Velmeshev_2023.h5ad"
+    name: "Velmeshev (2023)"
+    species: "Human"
+    cell_type_col: "cell_type"
+    timepoint_col: null
+    gene_col: "var_names"
+
+  # Mouse datasets
+  - path: "/path/to/La_Manno_2021.h5ad"
+    name: "La Manno (2021)"
+    species: "Mouse"
+    cell_type_col: "cell_type"
+    timepoint_col: "embryonic_day"
+    gene_col: "var_names"
+    timepoint_mapping:
+      "E10.5": 0.12
+      "E11.5": 0.15
+      "E12.5": 0.18
+      "E13.5": 0.22
+      "E14.5": 0.26
+      "E15.5": 0.30
+      "E16.5": 0.34
+
+  - path: "/path/to/Jin_2025.h5ad"
+    name: "Jin (2025)"
+    species: "Mouse"
+    cell_type_col: "supercategories"
+    timepoint_col: null
+    gene_col: "var_names"
+
+  # Zebrafish datasets
+  - path: "/path/to/Raj.h5ad"
+    name: "Raj"
+    species: "Zebrafish"
+    cell_type_col: "cell_type"
+    timepoint_col: "hpf"  # hours post-fertilization
+    gene_col: "var_names"
+
+  - path: "/path/to/Cao.h5ad"
+    name: "Cao"
+    species: "Zebrafish"
+    cell_type_col: "cell_type"
+    timepoint_col: null
+    gene_col: "var_names"
+
+  # Drosophila datasets
+  - path: "/path/to/Aerts.h5ad"
+    name: "Aerts"
+    species: "Drosophila"
+    cell_type_col: "cell_type"
+    timepoint_col: "stage"
+    gene_col: "var_names"

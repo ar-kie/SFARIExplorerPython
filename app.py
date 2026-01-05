@@ -273,8 +273,7 @@ def create_heatmap(
         zmin=-3,
         zmax=3,
         colorbar=dict(
-            title="Z-score",
-            titleside="right",
+            title=dict(text="Z-score", side="right"),
             thickness=15,
             len=0.7
         ),

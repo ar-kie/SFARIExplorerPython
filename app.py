@@ -153,8 +153,6 @@ def parse_gene_input(gene_text: str) -> List[str]:
 def create_heatmap_matrix(
     df: pd.DataFrame,
     value_col: str = 'mean_expr',
-    row_var: str = 'gene_display',
-    col_vars: List[str] = ['tissue', 'cell_type'],
     scale_rows: bool = True
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -162,15 +160,17 @@ def create_heatmap_matrix(
     
     Returns:
         matrix: The (optionally scaled) expression matrix
-        col_meta: Metadata for each column
+        col_meta: Metadata for each column (species, tissue/dataset, cell_type)
     """
     df = df.copy()
     
     # Create gene display name (prefer human symbol)
     df['gene_display'] = df['gene_human'].fillna(df['gene_native'])
     
-    # Create column key
-    df['col_key'] = df[col_vars].apply(lambda x: ' | '.join(x.astype(str)), axis=1)
+    # Create unique column key from all metadata
+    df['col_key'] = df.apply(
+        lambda x: f"{x['species']}|{x['tissue']}|{x['cell_type']}", axis=1
+    )
     
     # Pivot to wide format
     pivot = df.pivot_table(
@@ -189,9 +189,17 @@ def create_heatmap_matrix(
         # Clip to [-3, 3]
         pivot = pivot.clip(-3, 3)
     
-    # Build column metadata
-    col_meta = df[['col_key'] + col_vars + ['species']].drop_duplicates()
-    col_meta = col_meta.set_index('col_key').reindex(pivot.columns)
+    # Build column metadata - parse from col_key
+    col_meta_records = []
+    for col_key in pivot.columns:
+        parts = col_key.split('|')
+        col_meta_records.append({
+            'col_key': col_key,
+            'species': parts[0] if len(parts) > 0 else '',
+            'dataset': parts[1] if len(parts) > 1 else '',
+            'cell_type': parts[2] if len(parts) > 2 else ''
+        })
+    col_meta = pd.DataFrame(col_meta_records).set_index('col_key').reindex(pivot.columns)
     
     return pivot, col_meta
 
@@ -244,6 +252,296 @@ def cluster_matrix(
 # Visualization Functions
 # =============================================================================
 
+# Color palettes for annotations
+SPECIES_COLORS = {
+    'Human': '#e41a1c',
+    'Mouse': '#377eb8', 
+    'Zebrafish': '#4daf4a',
+    'Drosophila': '#984ea3'
+}
+
+CELLTYPE_COLORS = {
+    'Excitatory Neurons': '#e41a1c',
+    'Inhibitory Neurons': '#377eb8',
+    'Neural Progenitors & Stem Cells': '#4daf4a',
+    'Astrocytes': '#984ea3',
+    'Oligodendrocyte Lineage': '#ff7f00',
+    'Microglia & Macrophages': '#ffff33',
+    'Endothelial & Vascular Cells': '#a65628',
+    'Other Glia & Support': '#f781bf',
+    'Neurons (unspecified)': '#999999',
+    'Fibroblast / Mesenchymal': '#66c2a5',
+    'Early Embryonic / Germ Layers': '#fc8d62'
+}
+
+def get_color_palette(values: List[str], palette_type: str = 'auto') -> Dict[str, str]:
+    """Generate a color palette for categorical values."""
+    if palette_type == 'species':
+        return {v: SPECIES_COLORS.get(v, '#999999') for v in values}
+    elif palette_type == 'cell_type':
+        return {v: CELLTYPE_COLORS.get(v, '#999999') for v in values}
+    else:
+        # Auto-generate colors
+        import colorsys
+        n = len(values)
+        colors = {}
+        for i, v in enumerate(values):
+            hue = i / n
+            rgb = colorsys.hsv_to_rgb(hue, 0.7, 0.9)
+            colors[v] = f'rgb({int(rgb[0]*255)},{int(rgb[1]*255)},{int(rgb[2]*255)})'
+        return colors
+
+
+def create_complexheatmap(
+    matrix: pd.DataFrame,
+    col_meta: pd.DataFrame,
+    title: str = "Gene Expression Heatmap",
+    color_scale: str = "RdBu_r",
+    split_by: Optional[str] = None,
+    annotation_col: Optional[str] = None,
+    show_row_dendrogram: bool = False,
+    show_col_dendrogram: bool = False,
+    cluster_rows: bool = True,
+    cluster_cols: bool = True,
+    row_label_size: int = 9,
+    col_label_size: int = 9,
+    gap_between_splits: float = 0.02
+) -> go.Figure:
+    """
+    Create a ComplexHeatmap-like visualization using Plotly subplots.
+    
+    Args:
+        matrix: Expression matrix (genes x samples)
+        col_meta: Column metadata with 'species', 'dataset', 'cell_type'
+        title: Plot title
+        color_scale: Plotly colorscale name
+        split_by: Column in col_meta to split heatmap by ('species', 'dataset', 'cell_type')
+        annotation_col: Column in col_meta for top color annotation
+        show_row_dendrogram: Show row dendrogram
+        show_col_dendrogram: Show column dendrogram
+        cluster_rows: Cluster rows hierarchically
+        cluster_cols: Cluster columns (within splits if split_by is set)
+        row_label_size: Font size for gene labels
+        col_label_size: Font size for sample labels
+        gap_between_splits: Gap between split panels (0-0.1)
+    """
+    from plotly.subplots import make_subplots
+    
+    if matrix.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="No data to display", xref="paper", yref="paper",
+                          x=0.5, y=0.5, showarrow=False, font=dict(size=20))
+        return fig
+    
+    # Cluster rows if requested (applies to whole matrix)
+    if cluster_rows and matrix.shape[0] > 1:
+        try:
+            from scipy.cluster.hierarchy import linkage, leaves_list
+            from scipy.spatial.distance import pdist
+            mat_filled = matrix.fillna(0).values
+            dist = pdist(mat_filled)
+            link = linkage(dist, method='average')
+            row_order = leaves_list(link)
+            matrix = matrix.iloc[row_order]
+        except:
+            pass
+    
+    # Determine splits
+    if split_by and split_by in col_meta.columns:
+        split_values = col_meta[split_by].unique().tolist()
+        split_values = [s for s in split_values if pd.notna(s)]
+    else:
+        split_values = [None]
+    
+    n_splits = len(split_values)
+    
+    # Calculate subplot widths based on number of columns in each split
+    split_widths = []
+    split_matrices = []
+    split_col_metas = []
+    
+    for split_val in split_values:
+        if split_val is not None:
+            mask = col_meta[split_by] == split_val
+            cols = col_meta[mask].index.tolist()
+        else:
+            cols = col_meta.index.tolist()
+        
+        sub_matrix = matrix[[c for c in cols if c in matrix.columns]]
+        sub_col_meta = col_meta.loc[sub_matrix.columns]
+        
+        # Cluster columns within this split
+        if cluster_cols and sub_matrix.shape[1] > 1:
+            try:
+                mat_filled = sub_matrix.fillna(0).values.T
+                dist = pdist(mat_filled)
+                link = linkage(dist, method='average')
+                col_order = leaves_list(link)
+                sub_matrix = sub_matrix.iloc[:, col_order]
+                sub_col_meta = sub_col_meta.iloc[col_order]
+            except:
+                pass
+        
+        split_matrices.append(sub_matrix)
+        split_col_metas.append(sub_col_meta)
+        split_widths.append(max(sub_matrix.shape[1], 1))
+    
+    # Normalize widths
+    total_width = sum(split_widths)
+    col_widths = [w / total_width for w in split_widths]
+    
+    # Determine if we need annotation row
+    has_annotation = annotation_col and annotation_col in col_meta.columns
+    
+    # Create subplot structure
+    n_rows = 2 if has_annotation else 1
+    row_heights = [0.03, 0.97] if has_annotation else [1.0]
+    
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_splits,
+        column_widths=col_widths,
+        row_heights=row_heights,
+        horizontal_spacing=gap_between_splits,
+        vertical_spacing=0.01,
+        subplot_titles=[str(s) if s else "" for s in split_values] if n_splits > 1 else None
+    )
+    
+    # Get annotation colors
+    if has_annotation:
+        all_annotation_values = col_meta[annotation_col].unique().tolist()
+        if annotation_col == 'species':
+            anno_colors = get_color_palette(all_annotation_values, 'species')
+        elif annotation_col == 'cell_type':
+            anno_colors = get_color_palette(all_annotation_values, 'cell_type')
+        else:
+            anno_colors = get_color_palette(all_annotation_values, 'auto')
+    
+    # Track if we've added colorbar
+    colorbar_added = False
+    
+    # Add heatmaps and annotations for each split
+    for split_idx, (sub_matrix, sub_col_meta) in enumerate(zip(split_matrices, split_col_metas)):
+        col_idx = split_idx + 1
+        
+        if sub_matrix.empty:
+            continue
+        
+        # Create column labels (cell type only for cleaner display)
+        col_labels = sub_col_meta['cell_type'].tolist()
+        
+        # Add annotation bar if requested
+        if has_annotation:
+            anno_values = sub_col_meta[annotation_col].tolist()
+            anno_colors_list = [anno_colors.get(v, '#999999') for v in anno_values]
+            
+            # Create annotation heatmap (just colored bars)
+            anno_z = [[i for i in range(len(anno_values))]]
+            
+            fig.add_trace(
+                go.Heatmap(
+                    z=anno_z,
+                    x=col_labels,
+                    colorscale=[[i/max(len(anno_values)-1, 1), anno_colors_list[i]] 
+                               for i in range(len(anno_values))],
+                    showscale=False,
+                    hovertemplate=f"{annotation_col}: %{{customdata}}<extra></extra>",
+                    customdata=[anno_values]
+                ),
+                row=1, col=col_idx
+            )
+        
+        # Add main heatmap
+        heatmap_row = 2 if has_annotation else 1
+        
+        fig.add_trace(
+            go.Heatmap(
+                z=sub_matrix.values,
+                x=col_labels,
+                y=sub_matrix.index.tolist(),
+                colorscale=color_scale,
+                zmid=0,
+                zmin=-3,
+                zmax=3,
+                showscale=not colorbar_added,
+                colorbar=dict(
+                    title=dict(text="Z-score", side="right"),
+                    thickness=15,
+                    len=0.7,
+                    x=1.02
+                ) if not colorbar_added else None,
+                hovertemplate=(
+                    "Gene: %{y}<br>"
+                    "Cell type: %{x}<br>"
+                    f"Dataset: {sub_col_meta['dataset'].iloc[0] if len(sub_col_meta) > 0 else 'N/A'}<br>"
+                    "Z-score: %{z:.2f}<extra></extra>"
+                )
+            ),
+            row=heatmap_row, col=col_idx
+        )
+        colorbar_added = True
+    
+    # Update layout
+    height = max(400, 80 + len(matrix) * 16)
+    if has_annotation:
+        height += 30
+    
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=18)),
+        height=height,
+        margin=dict(l=150, r=80, t=100, b=120),
+        showlegend=False
+    )
+    
+    # Update axes
+    for i in range(1, n_splits + 1):
+        heatmap_row = 2 if has_annotation else 1
+        
+        # Hide annotation row axes
+        if has_annotation:
+            fig.update_xaxes(showticklabels=False, row=1, col=i)
+            fig.update_yaxes(showticklabels=False, row=1, col=i)
+        
+        # Style heatmap axes
+        fig.update_xaxes(
+            tickangle=45,
+            tickfont=dict(size=col_label_size),
+            row=heatmap_row, col=i
+        )
+        fig.update_yaxes(
+            tickfont=dict(size=row_label_size),
+            autorange='reversed',
+            showticklabels=(i == 1),  # Only show gene labels on first split
+            row=heatmap_row, col=i
+        )
+    
+    # Add legend for annotation colors
+    if has_annotation:
+        for i, (val, color) in enumerate(anno_colors.items()):
+            fig.add_trace(
+                go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(size=10, color=color),
+                    name=str(val),
+                    showlegend=True
+                )
+            )
+        fig.update_layout(
+            legend=dict(
+                title=dict(text=annotation_col.replace('_', ' ').title()),
+                orientation='h',
+                yanchor='bottom',
+                y=-0.25,
+                xanchor='center',
+                x=0.5
+            ),
+            showlegend=True
+        )
+    
+    return fig
+
+
 def create_heatmap(
     matrix: pd.DataFrame,
     col_meta: pd.DataFrame,
@@ -253,54 +551,17 @@ def create_heatmap(
     height: int = 600,
     show_dendrograms: bool = False
 ) -> go.Figure:
-    """Create an interactive heatmap using Plotly."""
-    
-    if matrix.empty:
-        fig = go.Figure()
-        fig.add_annotation(text="No data to display", xref="paper", yref="paper",
-                          x=0.5, y=0.5, showarrow=False, font=dict(size=20))
-        return fig
-    
-    # Format column labels
-    col_labels = [c.replace(' | ', '\n') for c in matrix.columns]
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=matrix.values,
-        x=col_labels,
-        y=matrix.index.tolist(),
-        colorscale=color_scale,
-        zmid=0,
-        zmin=-3,
-        zmax=3,
-        colorbar=dict(
-            title="Z-score",
-            titleside="right",
-            thickness=15,
-            len=0.7
-        ),
-        hovertemplate=(
-            "Gene: %{y}<br>"
-            "Sample: %{x}<br>"
-            "Z-score: %{z:.2f}<extra></extra>"
-        )
-    ))
-    
-    fig.update_layout(
-        title=dict(text=title, x=0.5, font=dict(size=18)),
-        xaxis=dict(
-            tickangle=45,
-            tickfont=dict(size=10),
-            side='bottom'
-        ),
-        yaxis=dict(
-            tickfont=dict(size=9),
-            autorange='reversed'
-        ),
-        height=max(400, 50 + len(matrix) * 18),
-        margin=dict(l=120, r=50, t=80, b=150)
+    """Legacy wrapper - redirects to create_complexheatmap."""
+    return create_complexheatmap(
+        matrix=matrix,
+        col_meta=col_meta,
+        title=title,
+        color_scale=color_scale,
+        split_by=facet_by,
+        annotation_col=facet_by,
+        cluster_rows=True,
+        cluster_cols=True
     )
-    
-    return fig
 
 
 def create_dotplot(
@@ -597,12 +858,13 @@ def main():
         st.metric("Cell Types", filtered_df['cell_type'].nunique())
     
     # Tabs for different views
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Heatmap", 
         "🔵 Dot Plot", 
         "📈 Temporal Dynamics",
         "🔬 Species Comparison",
-        "📋 Data Table"
+        "📋 Data Table",
+        "📚 About & Datasets"
     ])
     
     # --------------------------------------------------------------------------
@@ -614,19 +876,65 @@ def main():
         elif not selected_genes:
             st.info("Enter gene names in the sidebar to generate a heatmap.")
         else:
-            # Heatmap options
-            hm_col1, hm_col2 = st.columns([1, 3])
+            # Heatmap options - Row 1
+            st.markdown("**Heatmap Settings**")
+            hm_col1, hm_col2, hm_col3, hm_col4 = st.columns(4)
+            
             with hm_col1:
-                facet_option = st.selectbox(
-                    "Split by",
+                split_option = st.selectbox(
+                    "Split heatmap by",
                     options=["None", "Species", "Dataset", "Cell Type"],
-                    index=0
+                    index=0,
+                    help="Divide heatmap into panels by this variable"
                 )
+                split_by = {
+                    "None": None,
+                    "Species": "species",
+                    "Dataset": "dataset",
+                    "Cell Type": "cell_type"
+                }[split_option]
+            
+            with hm_col2:
+                annotation_option = st.selectbox(
+                    "Top annotation",
+                    options=["None", "Species", "Dataset", "Cell Type"],
+                    index=0,
+                    help="Add colored annotation bar at top"
+                )
+                annotation_col = {
+                    "None": None,
+                    "Species": "species",
+                    "Dataset": "dataset",
+                    "Cell Type": "cell_type"
+                }[annotation_option]
+            
+            with hm_col3:
                 color_scale = st.selectbox(
                     "Color scale",
-                    options=["RdBu_r", "Viridis", "Plasma", "Inferno", "Blues"],
+                    options=["RdBu_r", "Viridis", "Plasma", "Inferno", "Blues", "RdYlBu_r", "PiYG"],
                     index=0
                 )
+            
+            with hm_col4:
+                show_row_dend = st.checkbox("Show row dendrogram", value=False, disabled=True, 
+                                           help="Coming soon")
+                show_col_dend = st.checkbox("Show column dendrogram", value=False, disabled=True,
+                                           help="Coming soon")
+            
+            # Row 2: Clustering options
+            hm_col5, hm_col6, hm_col7, hm_col8 = st.columns(4)
+            
+            with hm_col5:
+                do_cluster_rows = st.checkbox("Cluster rows (genes)", value=cluster_rows)
+            
+            with hm_col6:
+                do_cluster_cols = st.checkbox("Cluster columns", value=cluster_cols)
+            
+            with hm_col7:
+                row_font = st.slider("Gene label size", 6, 14, 9)
+            
+            with hm_col8:
+                col_font = st.slider("Column label size", 6, 14, 9)
             
             # Create heatmap matrix
             matrix, col_meta = create_heatmap_matrix(
@@ -635,16 +943,20 @@ def main():
                 scale_rows=scale_rows
             )
             
-            # Cluster if requested
-            if cluster_rows or cluster_cols:
-                matrix, _, _ = cluster_matrix(matrix, cluster_rows, cluster_cols)
-            
-            # Create and display heatmap
-            fig = create_heatmap(
-                matrix,
-                col_meta,
+            # Create and display heatmap using new ComplexHeatmap-like function
+            fig = create_complexheatmap(
+                matrix=matrix,
+                col_meta=col_meta,
                 title=f"Expression Heatmap ({len(selected_genes)} genes)",
-                color_scale=color_scale
+                color_scale=color_scale,
+                split_by=split_by,
+                annotation_col=annotation_col,
+                show_row_dendrogram=show_row_dend,
+                show_col_dendrogram=show_col_dend,
+                cluster_rows=do_cluster_rows,
+                cluster_cols=do_cluster_cols,
+                row_label_size=row_font,
+                col_label_size=col_font
             )
             
             st.plotly_chart(fig, use_container_width=True)
@@ -766,6 +1078,128 @@ def main():
                     "filtered_expression_data.csv",
                     "text/csv"
                 )
+    
+    # --------------------------------------------------------------------------
+    # Tab 6: About & Datasets
+    # --------------------------------------------------------------------------
+    with tab6:
+        st.markdown("""
+        ## About SFARI Gene Expression Explorer
+        
+        This interactive web application enables exploration of gene expression patterns 
+        across multiple single-cell RNA-seq datasets from developing brain tissue, spanning 
+        multiple species (Human, Mouse, Zebrafish, Drosophila).
+        
+        ### Purpose
+        
+        The explorer is designed to help researchers:
+        - **Search** for genes of interest across species and developmental stages
+        - **Visualize** expression patterns using interactive heatmaps and dot plots
+        - **Compare** expression across species, datasets, and cell types
+        - **Identify** cell-type-specific expression of neurodevelopmental risk genes
+        
+        ---
+        
+        ## Datasets
+        
+        The following single-cell RNA-seq datasets are included in this resource:
+        
+        ### Human Datasets
+        
+        | Dataset | Publication | Journal | Species | Description |
+        |---------|-------------|---------|---------|-------------|
+        | **He (2024)** | He et al., 2024 | *Nature* | Human | Human Neural Organoid Cell Atlas (HNOCA) |
+        | **Bhaduri (2021)** | Bhaduri et al., 2021 | *Nature* | Human | Primary human cortical development |
+        | **Braun (2023)** | Braun et al., 2023 | *Science* | Human | Human brain cell atlas |
+        | **Velmeshev (2023)** | Velmeshev et al., 2023 | *Science* | Human | Developing human brain cell types |
+        | **Velmeshev (2019)** | Velmeshev et al., 2019 | *Science* | Human | Single-cell genomics of ASD brain |
+        | **Zhu (2023)** | Zhu et al., 2023 | *Science Advances* | Human | Human fetal brain development |
+        | **Wang (2025)** | Wang et al., 2025 | *Nature* | Human | Human brain development atlas |
+        | **Wang (2022)** | Wang et al., 2022 | *Nature Communications* | Human | Human cerebral organoids |
+        
+        ### Mouse Datasets
+        
+        | Dataset | Publication | Journal | Species | Description |
+        |---------|-------------|---------|---------|-------------|
+        | **La Manno (2021)** | La Manno et al., 2021 | *Nature* | Mouse | Mouse brain development atlas |
+        | **Jin (2025)** | Jin et al., 2025 | *Nature* | Mouse | Mouse brain cell atlas |
+        | **Sziraki (2023)** | Sziraki et al., 2023 | *Nature Genetics* | Mouse | Mouse brain cell types |
+        
+        ### Zebrafish Datasets
+        
+        | Dataset | Publication | Journal | Species | Description |
+        |---------|-------------|---------|---------|-------------|
+        | **Raj (2020)** | Raj et al., 2020 | *Neuroscience* | Zebrafish | Zebrafish brain development |
+        
+        ### Drosophila Datasets
+        
+        | Dataset | Publication | Journal | Species | Description |
+        |---------|-------------|---------|---------|-------------|
+        | **Davie (2018)** | Davie et al., 2018 | *Cell* | Drosophila | *Drosophila* brain cell atlas |
+        
+        ---
+        
+        ## Data Processing
+        
+        Expression data was processed as follows:
+        1. **Raw counts** were obtained from original publications
+        2. **Cell type annotations** were harmonized across datasets into common supercategories
+        3. **Gene symbols** were mapped to human orthologs for cross-species comparison
+        4. **Expression summaries** (mean expression, % expressing) were computed per cell type per dataset
+        
+        ### Cell Type Categories
+        
+        Cell types were harmonized into the following supercategories:
+        """)
+        
+        # Display cell type legend
+        celltype_df = pd.DataFrame([
+            {"Category": "Excitatory Neurons", "Description": "Glutamatergic projection neurons"},
+            {"Category": "Inhibitory Neurons", "Description": "GABAergic interneurons"},
+            {"Category": "Neural Progenitors & Stem Cells", "Description": "NPCs, radial glia, neural stem cells"},
+            {"Category": "Astrocytes", "Description": "Astrocytes and astrocyte precursors"},
+            {"Category": "Oligodendrocyte Lineage", "Description": "OPCs, oligodendrocytes"},
+            {"Category": "Microglia & Macrophages", "Description": "Brain-resident immune cells"},
+            {"Category": "Endothelial & Vascular Cells", "Description": "Blood vessel cells"},
+            {"Category": "Other Glia & Support", "Description": "Other glial cell types"},
+            {"Category": "Neurons (unspecified)", "Description": "Neurons without E/I classification"},
+            {"Category": "Early Embryonic / Germ Layers", "Description": "Early developmental cell types"},
+        ])
+        st.dataframe(celltype_df, hide_index=True, use_container_width=True)
+        
+        st.markdown("""
+        ---
+        
+        ## SFARI Gene Integration
+        
+        This explorer integrates the [SFARI Gene database](https://gene.sfari.org/), which catalogs 
+        genes implicated in autism spectrum disorder (ASD). Genes are scored based on strength of evidence:
+        
+        - **Score 1 (High Confidence)**: Strong evidence from multiple studies
+        - **Score 2**: Moderate evidence  
+        - **Score 3**: Suggestive evidence
+        
+        Use the "Quick Gene Sets" dropdown in the sidebar to quickly load SFARI risk genes.
+        
+        ---
+        
+        ## Citation
+        
+        If you use this resource in your research, please cite the original data publications 
+        listed above and this tool:
+        
+        ```
+        SFARI Gene Expression Explorer (2025)
+        https://github.com/ar-kie/SFARIExplorer
+        ```
+        
+        ---
+        
+        ## Contact & Feedback
+        
+        For questions, bug reports, or feature requests, please open an issue on 
+        [GitHub](https://github.com/ar-kie/SFARIExplorer/issues).
+        """)
     
     # ==========================================================================
     # Footer

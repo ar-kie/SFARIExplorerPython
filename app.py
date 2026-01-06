@@ -305,7 +305,8 @@ def create_complexheatmap(
     cluster_cols: bool = True,
     row_label_size: int = 9,
     col_label_size: int = 9,
-    gap_between_splits: float = 0.02
+    gap_between_splits: float = 0.02,
+    legend_position: str = "bottom"  # "bottom", "right", "left", "top"
 ) -> go.Figure:
     """
     Create a ComplexHeatmap-like visualization using Plotly subplots.
@@ -324,6 +325,7 @@ def create_complexheatmap(
         row_label_size: Font size for gene labels
         col_label_size: Font size for sample labels
         gap_between_splits: Gap between split panels (0-0.1)
+        legend_position: Position of annotation legend ("bottom", "right", "left", "top")
     """
     from plotly.subplots import make_subplots
     
@@ -527,15 +529,61 @@ def create_complexheatmap(
                     showlegend=True
                 )
             )
-        fig.update_layout(
-            legend=dict(
-                title=dict(text=annotation_col.replace('_', ' ').title()),
+        
+        # Configure legend position
+        if legend_position == "bottom":
+            legend_config = dict(
                 orientation='h',
-                yanchor='bottom',
-                y=-0.25,
+                yanchor='top',
+                y=-0.15,
                 xanchor='center',
                 x=0.5
-            ),
+            )
+            # Adjust bottom margin
+            fig.update_layout(margin=dict(l=150, r=80, t=100, b=180))
+        elif legend_position == "right":
+            legend_config = dict(
+                orientation='v',
+                yanchor='middle',
+                y=0.5,
+                xanchor='left',
+                x=1.02
+            )
+            # Adjust right margin
+            fig.update_layout(margin=dict(l=150, r=200, t=100, b=120))
+        elif legend_position == "left":
+            legend_config = dict(
+                orientation='v',
+                yanchor='middle',
+                y=0.5,
+                xanchor='right',
+                x=-0.15
+            )
+            # Adjust left margin
+            fig.update_layout(margin=dict(l=250, r=80, t=100, b=120))
+        elif legend_position == "top":
+            legend_config = dict(
+                orientation='h',
+                yanchor='bottom',
+                y=1.02,
+                xanchor='center',
+                x=0.5
+            )
+            # Adjust top margin
+            fig.update_layout(margin=dict(l=150, r=80, t=160, b=120))
+        else:  # default to bottom
+            legend_config = dict(
+                orientation='h',
+                yanchor='top',
+                y=-0.15,
+                xanchor='center',
+                x=0.5
+            )
+        
+        legend_config['title'] = dict(text=annotation_col.replace('_', ' ').title())
+        
+        fig.update_layout(
+            legend=legend_config,
             showlegend=True
         )
     
@@ -936,6 +984,18 @@ def main():
             with hm_col8:
                 col_font = st.slider("Column label size", 6, 14, 9)
             
+            # Row 3: Legend position
+            hm_col9, hm_col10, hm_col11, hm_col12 = st.columns(4)
+            
+            with hm_col9:
+                legend_pos = st.selectbox(
+                    "Legend position",
+                    options=["Bottom", "Right", "Left", "Top"],
+                    index=0,
+                    help="Position of the annotation legend"
+                )
+                legend_position = legend_pos.lower()
+            
             # Create heatmap matrix
             matrix, col_meta = create_heatmap_matrix(
                 filtered_df,
@@ -956,7 +1016,8 @@ def main():
                 cluster_rows=do_cluster_rows,
                 cluster_cols=do_cluster_cols,
                 row_label_size=row_font,
-                col_label_size=col_font
+                col_label_size=col_font,
+                legend_position=legend_position
             )
             
             st.plotly_chart(fig, use_container_width=True)

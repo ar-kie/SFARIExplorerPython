@@ -274,21 +274,64 @@ CELLTYPE_COLORS = {
     'Early Embryonic / Germ Layers': '#fc8d62'
 }
 
+DATASET_COLORS = {
+    # Human datasets
+    'He (2024)': '#e41a1c',
+    'Bhaduri (2021)': '#377eb8',
+    'Braun (2023)': '#4daf4a',
+    'Velmeshev (2023)': '#984ea3',
+    'Velmeshev (2019)': '#ff7f00',
+    'Zhu (2023)': '#ffff33',
+    'Wang (2025)': '#a65628',
+    'Wang (2022)': '#f781bf',
+    # Mouse datasets
+    'La Manno (2021)': '#66c2a5',
+    'Jin (2025)': '#fc8d62',
+    'Sziraki (2023)': '#8da0cb',
+    # Zebrafish
+    'Raj (2020)': '#e78ac3',
+    # Drosophila
+    'Davie (2018)': '#a6d854',
+    # Alternative names (in case data uses different naming)
+    'Linnarsson': '#66c2a5',
+    'Zeng': '#fc8d62',
+    'Raj': '#e78ac3',
+    'Aerts': '#a6d854',
+    'Cao': '#ffd92f',
+    'Velmeshev': '#984ea3',
+    'Bhaduri': '#377eb8',
+    'Linnarsson_2023': '#8da0cb',
+    'Velmeshev_2023': '#984ea3',
+    'Zhu': '#ffff33',
+    'Wang_2025': '#a65628',
+    'Wang_2022': '#f781bf',
+}
+
 def get_color_palette(values: List[str], palette_type: str = 'auto') -> Dict[str, str]:
     """Generate a color palette for categorical values."""
     if palette_type == 'species':
         return {v: SPECIES_COLORS.get(v, '#999999') for v in values}
     elif palette_type == 'cell_type':
         return {v: CELLTYPE_COLORS.get(v, '#999999') for v in values}
+    elif palette_type == 'dataset':
+        return {v: DATASET_COLORS.get(v, '#999999') for v in values}
     else:
-        # Auto-generate colors
+        # Auto-generate colors using a good categorical palette
         import colorsys
         n = len(values)
-        colors = {}
-        for i, v in enumerate(values):
-            hue = i / n
-            rgb = colorsys.hsv_to_rgb(hue, 0.7, 0.9)
-            colors[v] = f'rgb({int(rgb[0]*255)},{int(rgb[1]*255)},{int(rgb[2]*255)})'
+        # Use a predefined palette for small n, generate for large n
+        if n <= 12:
+            preset_colors = [
+                '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33',
+                '#a65628', '#f781bf', '#999999', '#66c2a5', '#fc8d62', '#8da0cb'
+            ]
+            colors = {v: preset_colors[i % len(preset_colors)] for i, v in enumerate(values)}
+        else:
+            colors = {}
+            for i, v in enumerate(values):
+                hue = i / n
+                rgb = colorsys.hsv_to_rgb(hue, 0.7, 0.9)
+                colors[v] = f'rgb({int(rgb[0]*255)},{int(rgb[1]*255)},{int(rgb[2]*255)})'
         return colors
 
 
@@ -416,6 +459,8 @@ def create_complexheatmap(
             anno_colors = get_color_palette(all_annotation_values, 'species')
         elif annotation_col == 'cell_type':
             anno_colors = get_color_palette(all_annotation_values, 'cell_type')
+        elif annotation_col == 'dataset':
+            anno_colors = get_color_palette(all_annotation_values, 'dataset')
         else:
             anno_colors = get_color_palette(all_annotation_values, 'auto')
     
@@ -429,8 +474,28 @@ def create_complexheatmap(
         if sub_matrix.empty:
             continue
         
-        # Create column labels (cell type only for cleaner display)
-        col_labels = sub_col_meta['cell_type'].tolist()
+        # Create column labels based on what's NOT being split
+        # If split by species: show "Dataset | Cell Type"
+        # If split by dataset: show "Species | Cell Type" 
+        # If split by cell_type: show "Species | Dataset"
+        # If no split: show "Dataset | Cell Type"
+        if split_by == 'species':
+            col_labels = [f"{d}\n{c}" for d, c in zip(sub_col_meta['dataset'], sub_col_meta['cell_type'])]
+        elif split_by == 'dataset':
+            col_labels = [f"{s}\n{c}" for s, c in zip(sub_col_meta['species'], sub_col_meta['cell_type'])]
+        elif split_by == 'cell_type':
+            col_labels = [f"{s}\n{d}" for s, d in zip(sub_col_meta['species'], sub_col_meta['dataset'])]
+        else:
+            col_labels = [f"{d}\n{c}" for d, c in zip(sub_col_meta['dataset'], sub_col_meta['cell_type'])]
+        
+        # Build custom hover data with all metadata
+        hover_data = []
+        for i in range(len(sub_col_meta)):
+            hover_data.append({
+                'species': sub_col_meta['species'].iloc[i],
+                'dataset': sub_col_meta['dataset'].iloc[i],
+                'cell_type': sub_col_meta['cell_type'].iloc[i]
+            })
         
         # Add annotation bar if requested
         if has_annotation:
@@ -440,6 +505,9 @@ def create_complexheatmap(
             # Create annotation heatmap (just colored bars)
             anno_z = [[i for i in range(len(anno_values))]]
             
+            # Build hover text for annotation
+            anno_hover = [[f"{annotation_col.replace('_', ' ').title()}: {v}" for v in anno_values]]
+            
             fig.add_trace(
                 go.Heatmap(
                     z=anno_z,
@@ -447,14 +515,29 @@ def create_complexheatmap(
                     colorscale=[[i/max(len(anno_values)-1, 1), anno_colors_list[i]] 
                                for i in range(len(anno_values))],
                     showscale=False,
-                    hovertemplate=f"{annotation_col}: %{{customdata}}<extra></extra>",
-                    customdata=[anno_values]
+                    hoverinfo='text',
+                    text=anno_hover
                 ),
                 row=1, col=col_idx
             )
         
         # Add main heatmap
         heatmap_row = 2 if has_annotation else 1
+        
+        # Build full hover text matrix
+        hover_text = []
+        for gene in sub_matrix.index:
+            row_hover = []
+            for i, col in enumerate(sub_matrix.columns):
+                val = sub_matrix.loc[gene, col]
+                h = hover_data[i]
+                text = (f"Gene: {gene}<br>"
+                       f"Species: {h['species']}<br>"
+                       f"Dataset: {h['dataset']}<br>"
+                       f"Cell type: {h['cell_type']}<br>"
+                       f"Z-score: {val:.2f}" if pd.notna(val) else f"Z-score: N/A")
+                row_hover.append(text)
+            hover_text.append(row_hover)
         
         fig.add_trace(
             go.Heatmap(
@@ -472,12 +555,8 @@ def create_complexheatmap(
                     len=0.7,
                     x=1.02
                 ) if not colorbar_added else None,
-                hovertemplate=(
-                    "Gene: %{y}<br>"
-                    "Cell type: %{x}<br>"
-                    f"Dataset: {sub_col_meta['dataset'].iloc[0] if len(sub_col_meta) > 0 else 'N/A'}<br>"
-                    "Z-score: %{z:.2f}<extra></extra>"
-                )
+                hoverinfo='text',
+                text=hover_text
             ),
             row=heatmap_row, col=col_idx
         )

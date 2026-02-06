@@ -1,6 +1,6 @@
 """
-SFARI Gene Expression Explorer
-A sophisticated cross-species gene expression browser for single-cell RNA-seq data.
+SFARIExplorer
+A cross-species gene expression browser for single-cell RNA-seq data.
 """
 
 import streamlit as st

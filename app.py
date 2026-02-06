@@ -7,6 +7,8 @@ Features:
 2. Interactive heatmaps with clustering and faceting options
 3. Dynamic temporal expression plots (pseudotime, developmental stages)
 4. SFARI risk gene annotations
+5. Data overview with batch correction & variance partition visualization
+6. UMAP visualization of integrated data
 """
 
 import streamlit as st
@@ -71,6 +73,27 @@ st.markdown("""
         font-size: 1.8rem;
         font-weight: 600;
     }
+    .info-box {
+        background-color: #e8f4f8;
+        border-left: 4px solid #2c5282;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0 8px 8px 0;
+    }
+    .success-box {
+        background-color: #e8f8e8;
+        border-left: 4px solid #28a745;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0 8px 8px 0;
+    }
+    .warning-box {
+        background-color: #fff8e8;
+        border-left: 4px solid #ffc107;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0 8px 8px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,27 +105,45 @@ st.markdown("""
 @st.cache_data(ttl=3600)
 def load_data(data_dir: str = "data") -> Dict[str, pd.DataFrame]:
     """Load all parquet data files with caching."""
+    data = {}
+    
     try:
-        expr_df = pd.read_parquet(f"{data_dir}/expression_summaries.parquet")
-        cellmeta = pd.read_parquet(f"{data_dir}/celltype_meta.parquet")
-        gene_map = pd.read_parquet(f"{data_dir}/gene_map.parquet")
-        risk_genes = pd.read_parquet(f"{data_dir}/risk_genes.parquet")
+        # Core expression data (required)
+        data['expression'] = pd.read_parquet(f"{data_dir}/expression_summaries.parquet")
+        data['cellmeta'] = pd.read_parquet(f"{data_dir}/celltype_meta.parquet")
+        data['gene_map'] = pd.read_parquet(f"{data_dir}/gene_map.parquet")
+        data['risk_genes'] = pd.read_parquet(f"{data_dir}/risk_genes.parquet")
         
-        # Ensure consistent column names
-        if 'gene-symbol' in risk_genes.columns:
-            risk_genes = risk_genes.rename(columns={'gene-symbol': 'gene_symbol'})
-        if 'gene-score' in risk_genes.columns:
-            risk_genes = risk_genes.rename(columns={'gene-score': 'gene_score'})
-            
-        return {
-            'expression': expr_df,
-            'cellmeta': cellmeta,
-            'gene_map': gene_map,
-            'risk_genes': risk_genes
-        }
+        # Ensure consistent column names for risk_genes
+        if 'gene-symbol' in data['risk_genes'].columns:
+            data['risk_genes'] = data['risk_genes'].rename(columns={'gene-symbol': 'gene_symbol'})
+        if 'gene-score' in data['risk_genes'].columns:
+            data['risk_genes'] = data['risk_genes'].rename(columns={'gene-score': 'gene_score'})
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"Error loading core data: {e}")
         return None
+    
+    # Optional data files (new parquets)
+    optional_files = {
+        'umap': 'umap_subsample.parquet',
+        'vp_summary': 'variance_partition_summary.parquet',
+        'vp_by_gene': 'variance_partition_by_gene.parquet',
+        'vp_by_gene_wide': 'variance_partition_by_gene_wide.parquet',
+        'dataset_info': 'dataset_info.parquet',
+        'batch_correction': 'batch_correction_info.parquet',
+        'summary_stats': 'summary_statistics.parquet',
+    }
+    
+    for key, filename in optional_files.items():
+        try:
+            data[key] = pd.read_parquet(f"{data_dir}/{filename}")
+        except FileNotFoundError:
+            data[key] = None
+        except Exception as e:
+            st.warning(f"Could not load {filename}: {e}")
+            data[key] = None
+    
+    return data
 
 
 def get_unique_values(df: pd.DataFrame, column: str) -> List[str]:
@@ -268,6 +309,7 @@ CELLTYPE_COLORS = {
     'Oligodendrocyte Lineage': '#ff7f00',
     'Microglia & Macrophages': '#ffff33',
     'Endothelial & Vascular Cells': '#a65628',
+    'Endothelial & Vascular': '#a65628',
     'Other Glia & Support': '#f781bf',
     'Neurons (unspecified)': '#999999',
     'Fibroblast / Mesenchymal': '#66c2a5',
@@ -292,19 +334,6 @@ DATASET_COLORS = {
     'Raj (2020)': '#e78ac3',
     # Drosophila
     'Davie (2018)': '#a6d854',
-    # Alternative names (in case data uses different naming)
-    'Linnarsson': '#66c2a5',
-    'Zeng': '#fc8d62',
-    'Raj': '#e78ac3',
-    'Aerts': '#a6d854',
-    'Cao': '#ffd92f',
-    'Velmeshev': '#984ea3',
-    'Bhaduri': '#377eb8',
-    'Linnarsson_2023': '#8da0cb',
-    'Velmeshev_2023': '#984ea3',
-    'Zhu': '#ffff33',
-    'Wang_2025': '#a65628',
-    'Wang_2022': '#f781bf',
 }
 
 def get_color_palette(values: List[str], palette_type: str = 'auto') -> Dict[str, str]:
@@ -317,9 +346,7 @@ def get_color_palette(values: List[str], palette_type: str = 'auto') -> Dict[str
         return {v: DATASET_COLORS.get(v, '#999999') for v in values}
     else:
         # Auto-generate colors using a good categorical palette
-        import colorsys
         n = len(values)
-        # Use a predefined palette for small n, generate for large n
         if n <= 12:
             preset_colors = [
                 '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33',
@@ -327,6 +354,7 @@ def get_color_palette(values: List[str], palette_type: str = 'auto') -> Dict[str
             ]
             colors = {v: preset_colors[i % len(preset_colors)] for i, v in enumerate(values)}
         else:
+            import colorsys
             colors = {}
             for i, v in enumerate(values):
                 hue = i / n
@@ -349,26 +377,10 @@ def create_complexheatmap(
     row_label_size: int = 9,
     col_label_size: int = 9,
     gap_between_splits: float = 0.02,
-    legend_position: str = "bottom"  # "bottom", "right", "left", "top"
+    legend_position: str = "bottom"
 ) -> go.Figure:
     """
     Create a ComplexHeatmap-like visualization using Plotly subplots.
-    
-    Args:
-        matrix: Expression matrix (genes x samples)
-        col_meta: Column metadata with 'species', 'dataset', 'cell_type'
-        title: Plot title
-        color_scale: Plotly colorscale name
-        split_by: Column in col_meta to split heatmap by ('species', 'dataset', 'cell_type')
-        annotation_col: Column in col_meta for top color annotation
-        show_row_dendrogram: Show row dendrogram
-        show_col_dendrogram: Show column dendrogram
-        cluster_rows: Cluster rows hierarchically
-        cluster_cols: Cluster columns (within splits if split_by is set)
-        row_label_size: Font size for gene labels
-        col_label_size: Font size for sample labels
-        gap_between_splits: Gap between split panels (0-0.1)
-        legend_position: Position of annotation legend ("bottom", "right", "left", "top")
     """
     from plotly.subplots import make_subplots
     
@@ -381,8 +393,6 @@ def create_complexheatmap(
     # Cluster rows if requested (applies to whole matrix)
     if cluster_rows and matrix.shape[0] > 1:
         try:
-            from scipy.cluster.hierarchy import linkage, leaves_list
-            from scipy.spatial.distance import pdist
             mat_filled = matrix.fillna(0).values
             dist = pdist(mat_filled)
             link = linkage(dist, method='average')
@@ -474,11 +484,7 @@ def create_complexheatmap(
         if sub_matrix.empty:
             continue
         
-        # Create column labels based on what's NOT being split
-        # If split by species: show "Dataset | Cell Type"
-        # If split by dataset: show "Species | Cell Type" 
-        # If split by cell_type: show "Species | Dataset"
-        # If no split: show "Dataset | Cell Type"
+        # Create column labels
         if split_by == 'species':
             col_labels = [f"{d}\n{c}" for d, c in zip(sub_col_meta['dataset'], sub_col_meta['cell_type'])]
         elif split_by == 'dataset':
@@ -488,7 +494,7 @@ def create_complexheatmap(
         else:
             col_labels = [f"{d}\n{c}" for d, c in zip(sub_col_meta['dataset'], sub_col_meta['cell_type'])]
         
-        # Build custom hover data with all metadata
+        # Build hover data
         hover_data = []
         for i in range(len(sub_col_meta)):
             hover_data.append({
@@ -502,10 +508,7 @@ def create_complexheatmap(
             anno_values = sub_col_meta[annotation_col].tolist()
             anno_colors_list = [anno_colors.get(v, '#999999') for v in anno_values]
             
-            # Create annotation heatmap (just colored bars)
             anno_z = [[i for i in range(len(anno_values))]]
-            
-            # Build hover text for annotation
             anno_hover = [[f"{annotation_col.replace('_', ' ').title()}: {v}" for v in anno_values]]
             
             fig.add_trace(
@@ -524,7 +527,7 @@ def create_complexheatmap(
         # Add main heatmap
         heatmap_row = 2 if has_annotation else 1
         
-        # Build full hover text matrix
+        # Build hover text
         hover_text = []
         for gene in sub_matrix.index:
             row_hover = []
@@ -578,12 +581,10 @@ def create_complexheatmap(
     for i in range(1, n_splits + 1):
         heatmap_row = 2 if has_annotation else 1
         
-        # Hide annotation row axes
         if has_annotation:
             fig.update_xaxes(showticklabels=False, row=1, col=i)
             fig.update_yaxes(showticklabels=False, row=1, col=i)
         
-        # Style heatmap axes
         fig.update_xaxes(
             tickangle=45,
             tickfont=dict(size=col_label_size),
@@ -592,7 +593,7 @@ def create_complexheatmap(
         fig.update_yaxes(
             tickfont=dict(size=row_label_size),
             autorange='reversed',
-            showticklabels=(i == 1),  # Only show gene labels on first split
+            showticklabels=(i == 1),
             row=heatmap_row, col=i
         )
     
@@ -609,86 +610,23 @@ def create_complexheatmap(
                 )
             )
         
-        # Configure legend position
         if legend_position == "bottom":
-            legend_config = dict(
-                orientation='h',
-                yanchor='top',
-                y=-0.15,
-                xanchor='center',
-                x=0.5
-            )
-            # Adjust bottom margin
+            legend_config = dict(orientation='h', yanchor='top', y=-0.15, xanchor='center', x=0.5)
             fig.update_layout(margin=dict(l=150, r=80, t=100, b=180))
         elif legend_position == "right":
-            legend_config = dict(
-                orientation='v',
-                yanchor='middle',
-                y=0.5,
-                xanchor='left',
-                x=1.02
-            )
-            # Adjust right margin
+            legend_config = dict(orientation='v', yanchor='middle', y=0.5, xanchor='left', x=1.02)
             fig.update_layout(margin=dict(l=150, r=200, t=100, b=120))
         elif legend_position == "left":
-            legend_config = dict(
-                orientation='v',
-                yanchor='middle',
-                y=0.5,
-                xanchor='right',
-                x=-0.15
-            )
-            # Adjust left margin
+            legend_config = dict(orientation='v', yanchor='middle', y=0.5, xanchor='right', x=-0.15)
             fig.update_layout(margin=dict(l=250, r=80, t=100, b=120))
-        elif legend_position == "top":
-            legend_config = dict(
-                orientation='h',
-                yanchor='bottom',
-                y=1.02,
-                xanchor='center',
-                x=0.5
-            )
-            # Adjust top margin
+        else:
+            legend_config = dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
             fig.update_layout(margin=dict(l=150, r=80, t=160, b=120))
-        else:  # default to bottom
-            legend_config = dict(
-                orientation='h',
-                yanchor='top',
-                y=-0.15,
-                xanchor='center',
-                x=0.5
-            )
         
         legend_config['title'] = dict(text=annotation_col.replace('_', ' ').title())
-        
-        fig.update_layout(
-            legend=legend_config,
-            showlegend=True
-        )
+        fig.update_layout(legend=legend_config, showlegend=True)
     
     return fig
-
-
-def create_heatmap(
-    matrix: pd.DataFrame,
-    col_meta: pd.DataFrame,
-    title: str = "Gene Expression Heatmap",
-    color_scale: str = "RdBu_r",
-    facet_by: Optional[str] = None,
-    height: int = 600,
-    show_dendrograms: bool = False
-) -> go.Figure:
-    """Legacy wrapper - redirects to create_complexheatmap."""
-    return create_complexheatmap(
-        matrix=matrix,
-        col_meta=col_meta,
-        title=title,
-        color_scale=color_scale,
-        split_by=facet_by,
-        annotation_col=facet_by,
-        cluster_rows=True,
-        cluster_cols=True
-    )
 
 
 def create_dotplot(
@@ -704,13 +642,11 @@ def create_dotplot(
     df = df.copy()
     df['gene_display'] = df['gene_human'].fillna(df['gene_native'])
     
-    # Aggregate by gene and group
     agg_df = df.groupby(['gene_display', group_by]).agg({
         size_col: 'mean',
         color_col: 'mean'
     }).reset_index()
     
-    # Scale size
     agg_df['size_scaled'] = agg_df[size_col] * 30 + 5
     
     fig = px.scatter(
@@ -750,20 +686,14 @@ def create_dotplot(
 def create_temporal_plot(
     df: pd.DataFrame,
     genes: List[str],
-    time_col: str = 'tissue',  # Placeholder - will use dataset as proxy
+    time_col: str = 'tissue',
     group_by: str = 'cell_type',
     value_col: str = 'mean_expr'
 ) -> go.Figure:
-    """
-    Create temporal expression dynamics plot.
-    
-    Note: This is a placeholder that uses datasets as a proxy for time.
-    For real temporal analysis, you'll need actual timepoint data.
-    """
+    """Create temporal expression dynamics plot."""
     df = df.copy()
     df['gene_display'] = df['gene_human'].fillna(df['gene_native'])
     
-    # Aggregate
     agg_df = df.groupby(['gene_display', time_col, 'species']).agg({
         value_col: 'mean',
         'pct_expressing': 'mean',
@@ -803,7 +733,6 @@ def create_species_comparison_plot(
     df = df.copy()
     df['gene_display'] = df['gene_human'].fillna(df['gene_native'])
     
-    # Aggregate by gene, species, cell_type
     agg_df = df.groupby(['gene_display', 'species', 'cell_type']).agg({
         value_col: 'mean',
         'pct_expressing': 'mean'
@@ -830,6 +759,193 @@ def create_species_comparison_plot(
     )
     
     return fig
+
+
+# =============================================================================
+# New Visualization Functions for Data Overview
+# =============================================================================
+
+def create_variance_partition_barplot(vp_summary: pd.DataFrame) -> go.Figure:
+    """Create a grouped bar plot showing variance explained before/after correction."""
+    
+    # Define colors
+    colors = {
+        'Before Correction': '#ff7f0e',
+        'After Correction': '#1f77b4'
+    }
+    
+    fig = go.Figure()
+    
+    for stage in ['Before Correction', 'After Correction']:
+        stage_data = vp_summary[vp_summary['stage'] == stage]
+        fig.add_trace(go.Bar(
+            name=stage,
+            x=stage_data['variable'],
+            y=stage_data['variance_explained'],
+            marker_color=colors[stage],
+            text=[f"{v:.1f}%" for v in stage_data['variance_explained']],
+            textposition='outside'
+        ))
+    
+    fig.update_layout(
+        title=dict(
+            text="Variance Explained by Each Factor",
+            x=0.5,
+            font=dict(size=18)
+        ),
+        xaxis_title="Variable",
+        yaxis_title="Variance Explained (%)",
+        barmode='group',
+        height=450,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        yaxis=dict(range=[0, max(vp_summary['variance_explained']) * 1.15])
+    )
+    
+    # Add annotation for goal
+    fig.add_annotation(
+        text="Goal: ↓ dataset (batch), ↑ or = biological factors",
+        xref="paper", yref="paper",
+        x=0.5, y=-0.15,
+        showarrow=False,
+        font=dict(size=11, color='gray')
+    )
+    
+    return fig
+
+
+def create_variance_change_plot(vp_summary: pd.DataFrame) -> go.Figure:
+    """Create a waterfall-style plot showing the change in variance."""
+    
+    # Get unique variables and their changes
+    vars_df = vp_summary.groupby('variable').first().reset_index()
+    
+    if 'change' not in vars_df.columns:
+        # Calculate change
+        before = vp_summary[vp_summary['stage'] == 'Before Correction'].set_index('variable')['variance_explained']
+        after = vp_summary[vp_summary['stage'] == 'After Correction'].set_index('variable')['variance_explained']
+        vars_df = pd.DataFrame({
+            'variable': before.index,
+            'change': after.values - before.values
+        })
+    
+    # Color by whether change is good or bad
+    colors = []
+    for _, row in vars_df.iterrows():
+        var = row['variable']
+        change = row['change']
+        if var == 'dataset':
+            # For dataset (batch), decrease is good
+            colors.append('#28a745' if change < 0 else '#dc3545')
+        elif var == 'Residuals':
+            # Residuals increase is neutral
+            colors.append('#6c757d')
+        else:
+            # For biological factors, increase is good
+            colors.append('#28a745' if change >= 0 else '#dc3545')
+    
+    fig = go.Figure(go.Bar(
+        x=vars_df['variable'],
+        y=vars_df['change'],
+        marker_color=colors,
+        text=[f"{c:+.1f}%" for c in vars_df['change']],
+        textposition='outside'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text="Change in Variance Explained After Batch Correction",
+            x=0.5,
+            font=dict(size=18)
+        ),
+        xaxis_title="Variable",
+        yaxis_title="Change in Variance (%)",
+        height=400,
+        yaxis=dict(zeroline=True, zerolinewidth=2, zerolinecolor='black')
+    )
+    
+    return fig
+
+
+def create_umap_plot(
+    umap_df: pd.DataFrame,
+    color_by: str = 'predicted_labels',
+    title: str = "UMAP Visualization"
+) -> go.Figure:
+    """Create an interactive UMAP scatter plot."""
+    
+    # Determine color column
+    if color_by not in umap_df.columns:
+        color_by = umap_df.columns[2] if len(umap_df.columns) > 2 else None
+    
+    # Get color palette
+    if color_by:
+        unique_vals = umap_df[color_by].unique().tolist()
+        if color_by == 'organism':
+            color_map = SPECIES_COLORS
+        elif color_by in ['predicted_labels', 'cell_type']:
+            color_map = CELLTYPE_COLORS
+        elif color_by == 'dataset':
+            color_map = DATASET_COLORS
+        else:
+            color_map = get_color_palette(unique_vals, 'auto')
+    
+    fig = px.scatter(
+        umap_df,
+        x='umap_1' if 'umap_1' in umap_df.columns else umap_df.columns[0],
+        y='umap_2' if 'umap_2' in umap_df.columns else umap_df.columns[1],
+        color=color_by,
+        color_discrete_map=color_map if color_by else None,
+        title=title,
+        labels={
+            'umap_1': 'UMAP 1',
+            'umap_2': 'UMAP 2'
+        },
+        hover_data=[c for c in ['organism', 'dataset', 'predicted_labels'] if c in umap_df.columns]
+    )
+    
+    fig.update_traces(marker=dict(size=3, opacity=0.6))
+    
+    fig.update_layout(
+        height=600,
+        legend=dict(
+            orientation='v',
+            yanchor='top',
+            y=1,
+            xanchor='left',
+            x=1.02,
+            font=dict(size=10)
+        )
+    )
+    
+    return fig
+
+
+def create_dataset_summary_table(dataset_info: pd.DataFrame) -> pd.DataFrame:
+    """Format dataset info for display."""
+    display_cols = ['dataset', 'organism', 'sample_type', 'n_pseudobulk_samples', 
+                    'n_cell_types', 'n_timepoints']
+    available_cols = [c for c in display_cols if c in dataset_info.columns]
+    
+    df = dataset_info[available_cols].copy()
+    
+    # Rename for display
+    rename_map = {
+        'dataset': 'Dataset',
+        'organism': 'Species',
+        'sample_type': 'Sample Type',
+        'n_pseudobulk_samples': 'Pseudobulk Samples',
+        'n_cell_types': 'Cell Types',
+        'n_timepoints': 'Timepoints'
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    
+    return df
 
 
 # =============================================================================
@@ -927,10 +1043,12 @@ def main():
             score2_genes = risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist()[:50]
             preset_genes = ", ".join(score2_genes)
         elif gene_preset == "SFARI Syndromic":
-            synd_genes = risk_genes[risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist()[:50]
+            if 'syndromic' in risk_genes.columns:
+                synd_genes = risk_genes[risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist()[:50]
+            else:
+                synd_genes = []
             preset_genes = ", ".join(synd_genes)
         elif gene_preset == "Top Variable Genes":
-            # Calculate variance across all data
             var_df = expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False)
             preset_genes = ", ".join(var_df.head(30).index.tolist())
         
@@ -984,26 +1102,271 @@ def main():
     with col4:
         st.metric("Cell Types", filtered_df['cell_type'].nunique())
     
-    # Tabs for different views
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📊 Heatmap", 
+    # Tabs for different views - UPDATED with new tabs
+    tab_overview, tab_umap, tab_heatmap, tab_dotplot, tab_temporal, tab_species, tab_table, tab_about = st.tabs([
+        "📊 Data Overview",
+        "🗺️ UMAP",
+        "🔥 Heatmap", 
         "🔵 Dot Plot", 
-        "📈 Temporal Dynamics",
+        "📈 Temporal",
         "🔬 Species Comparison",
         "📋 Data Table",
-        "📚 About & Datasets"
+        "📚 About"
     ])
     
     # --------------------------------------------------------------------------
-    # Tab 1: Heatmap
+    # Tab 0: Data Overview (NEW)
     # --------------------------------------------------------------------------
-    with tab1:
+    with tab_overview:
+        st.header("Data Overview & Batch Correction")
+        
+        st.markdown("""
+        This section provides an overview of the integrated single-cell dataset, 
+        including batch correction methodology and quality metrics.
+        """)
+        
+        # Summary statistics
+        if data['summary_stats'] is not None:
+            st.subheader("📈 Dataset Summary")
+            
+            summary = data['summary_stats']
+            totals = summary[summary['category'] == 'totals'].set_index('label')['value']
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                if 'pseudobulk_samples' in totals.index:
+                    st.metric("Pseudobulk Samples", f"{int(totals['pseudobulk_samples']):,}")
+            with col2:
+                if 'datasets' in totals.index:
+                    st.metric("Datasets", int(totals['datasets']))
+            with col3:
+                if 'cell_types' in totals.index:
+                    st.metric("Cell Types", int(totals['cell_types']))
+            with col4:
+                if 'organisms' in totals.index:
+                    st.metric("Species", int(totals['organisms']))
+        
+        # Dataset information table
+        if data['dataset_info'] is not None:
+            st.subheader("📋 Datasets Included")
+            
+            dataset_table = create_dataset_summary_table(data['dataset_info'])
+            st.dataframe(dataset_table, hide_index=True, use_container_width=True)
+        
+        st.divider()
+        
+        # Batch correction methodology
+        st.subheader("🔧 Batch Correction Methodology")
+        
+        if data['batch_correction'] is not None:
+            bc_info = data['batch_correction']
+            
+            st.markdown("""
+            <div class="info-box">
+            <strong>Approach:</strong> Within-organism batch correction using ComBat, 
+            preserving biological covariates (cell type, developmental time) while 
+            removing technical batch effects (dataset).
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Show correction groups
+            st.markdown("**Correction Groups:**")
+            
+            for _, row in bc_info.iterrows():
+                if row.get('correction_applied', False):
+                    st.markdown(f"""
+                    - **{row['correction_group']}**: {row['n_datasets']} datasets corrected using {row['method']}
+                      - Covariates preserved: {row.get('covariates_preserved', 'cell_type')}
+                      - Datasets: {row['datasets']}
+                    """)
+                else:
+                    st.markdown(f"""
+                    - **{row['correction_group']}**: Single dataset (no correction needed)
+                    """)
+        else:
+            st.info("Batch correction information not available.")
+        
+        st.divider()
+        
+        # Variance partition results
+        st.subheader("📊 Variance Partition Analysis")
+        
+        if data['vp_summary'] is not None:
+            st.markdown("""
+            Variance partition analysis quantifies how much of the gene expression 
+            variance is explained by each factor. **Successful batch correction** should:
+            - **Decrease** variance explained by `dataset` (technical/batch effect)
+            - **Preserve or increase** variance explained by biological factors (cell_type, organism, timepoint)
+            """)
+            
+            vp_col1, vp_col2 = st.columns(2)
+            
+            with vp_col1:
+                fig_vp = create_variance_partition_barplot(data['vp_summary'])
+                st.plotly_chart(fig_vp, use_container_width=True)
+            
+            with vp_col2:
+                fig_change = create_variance_change_plot(data['vp_summary'])
+                st.plotly_chart(fig_change, use_container_width=True)
+            
+            # Interpretation
+            vp_df = data['vp_summary']
+            before_dataset = vp_df[(vp_df['variable'] == 'dataset') & (vp_df['stage'] == 'Before Correction')]['variance_explained'].values
+            after_dataset = vp_df[(vp_df['variable'] == 'dataset') & (vp_df['stage'] == 'After Correction')]['variance_explained'].values
+            
+            if len(before_dataset) > 0 and len(after_dataset) > 0:
+                reduction = before_dataset[0] - after_dataset[0]
+                if reduction > 0:
+                    st.markdown(f"""
+                    <div class="success-box">
+                    ✅ <strong>Batch correction successful!</strong> Dataset variance reduced by {reduction:.1f}% 
+                    ({before_dataset[0]:.1f}% → {after_dataset[0]:.1f}%)
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="warning-box">
+                    ⚠️ <strong>Note:</strong> Dataset variance increased slightly. This may indicate 
+                    confounding between batch and biological factors.
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.info("Variance partition data not available.")
+        
+        # Per-gene variance partition
+        if data['vp_by_gene'] is not None:
+            with st.expander("🔬 Per-Gene Variance Breakdown"):
+                st.markdown("""
+                Explore variance partition results for individual genes. 
+                This shows how much of each gene's expression variance is explained by different factors.
+                """)
+                
+                vp_genes = data['vp_by_gene']
+                
+                # Gene search
+                gene_search = st.text_input("Search for a gene:", placeholder="e.g., SHANK3")
+                
+                if gene_search:
+                    gene_data = vp_genes[vp_genes['gene'].str.upper() == gene_search.upper()]
+                    
+                    if not gene_data.empty:
+                        fig_gene = px.bar(
+                            gene_data,
+                            x='variable',
+                            y='variance_explained',
+                            color='variable',
+                            title=f"Variance Partition for {gene_search.upper()}",
+                            labels={'variance_explained': 'Variance Explained (%)', 'variable': 'Factor'}
+                        )
+                        fig_gene.update_layout(showlegend=False, height=350)
+                        st.plotly_chart(fig_gene, use_container_width=True)
+                    else:
+                        st.warning(f"Gene '{gene_search}' not found in variance partition results.")
+    
+    # --------------------------------------------------------------------------
+    # Tab 1: UMAP (NEW)
+    # --------------------------------------------------------------------------
+    with tab_umap:
+        st.header("UMAP Visualization")
+        
+        if data['umap'] is not None:
+            umap_df = data['umap']
+            
+            st.markdown(f"""
+            Interactive UMAP visualization of **{len(umap_df):,} cells** subsampled from the 
+            integrated dataset. Cells are colored by various metadata attributes.
+            """)
+            
+            # Color options
+            available_color_cols = [c for c in umap_df.columns if c not in ['umap_1', 'umap_2', 'cell_id']]
+            
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                color_by = st.selectbox(
+                    "Color by:",
+                    options=available_color_cols,
+                    index=available_color_cols.index('predicted_labels') if 'predicted_labels' in available_color_cols else 0
+                )
+                
+                # Show legend toggle
+                show_legend = st.checkbox("Show legend", value=True)
+                
+                # Point size
+                point_size = st.slider("Point size", 1, 10, 3)
+                
+                # Opacity
+                opacity = st.slider("Opacity", 0.1, 1.0, 0.6)
+            
+            with col2:
+                # Create UMAP plot
+                unique_vals = umap_df[color_by].unique().tolist()
+                
+                if color_by == 'organism':
+                    color_map = SPECIES_COLORS
+                elif color_by in ['predicted_labels', 'cell_type']:
+                    color_map = CELLTYPE_COLORS
+                elif color_by == 'dataset':
+                    color_map = DATASET_COLORS
+                else:
+                    color_map = get_color_palette(unique_vals, 'auto')
+                
+                fig_umap = px.scatter(
+                    umap_df,
+                    x='umap_1' if 'umap_1' in umap_df.columns else umap_df.columns[0],
+                    y='umap_2' if 'umap_2' in umap_df.columns else umap_df.columns[1],
+                    color=color_by,
+                    color_discrete_map=color_map,
+                    title=f"UMAP colored by {color_by.replace('_', ' ').title()}",
+                    labels={'umap_1': 'UMAP 1', 'umap_2': 'UMAP 2'},
+                    hover_data=[c for c in ['organism', 'dataset', 'predicted_labels'] if c in umap_df.columns]
+                )
+                
+                fig_umap.update_traces(marker=dict(size=point_size, opacity=opacity))
+                
+                fig_umap.update_layout(
+                    height=650,
+                    showlegend=show_legend,
+                    legend=dict(
+                        orientation='v',
+                        yanchor='top',
+                        y=1,
+                        xanchor='left',
+                        x=1.02,
+                        font=dict(size=9)
+                    )
+                )
+                
+                st.plotly_chart(fig_umap, use_container_width=True)
+            
+            # Download UMAP coordinates
+            with st.expander("📥 Download UMAP Data"):
+                csv = umap_df.to_csv(index=False)
+                st.download_button(
+                    "Download UMAP coordinates as CSV",
+                    csv,
+                    "umap_coordinates.csv",
+                    "text/csv"
+                )
+        else:
+            st.info("""
+            UMAP visualization data not available. 
+            
+            To enable this feature, generate a `umap_subsample.parquet` file containing:
+            - `umap_1`, `umap_2`: UMAP coordinates
+            - `organism`, `dataset`, `predicted_labels`: Metadata columns
+            """)
+    
+    # --------------------------------------------------------------------------
+    # Tab 2: Heatmap
+    # --------------------------------------------------------------------------
+    with tab_heatmap:
         if filtered_df.empty:
             st.warning("No data matches your filters. Try broadening your selection.")
         elif not selected_genes:
             st.info("Enter gene names in the sidebar to generate a heatmap.")
         else:
-            # Heatmap options - Row 1
+            # Heatmap options
             st.markdown("**Heatmap Settings**")
             hm_col1, hm_col2, hm_col3, hm_col4 = st.columns(4)
             
@@ -1011,29 +1374,17 @@ def main():
                 split_option = st.selectbox(
                     "Split heatmap by",
                     options=["None", "Species", "Dataset", "Cell Type"],
-                    index=0,
-                    help="Divide heatmap into panels by this variable"
+                    index=0
                 )
-                split_by = {
-                    "None": None,
-                    "Species": "species",
-                    "Dataset": "dataset",
-                    "Cell Type": "cell_type"
-                }[split_option]
+                split_by = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[split_option]
             
             with hm_col2:
                 annotation_option = st.selectbox(
                     "Top annotation",
                     options=["None", "Species", "Dataset", "Cell Type"],
-                    index=0,
-                    help="Add colored annotation bar at top"
+                    index=0
                 )
-                annotation_col = {
-                    "None": None,
-                    "Species": "species",
-                    "Dataset": "dataset",
-                    "Cell Type": "cell_type"
-                }[annotation_option]
+                annotation_col = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[annotation_option]
             
             with hm_col3:
                 color_scale = st.selectbox(
@@ -1043,46 +1394,26 @@ def main():
                 )
             
             with hm_col4:
-                show_row_dend = st.checkbox("Show row dendrogram", value=False, disabled=True, 
-                                           help="Coming soon")
-                show_col_dend = st.checkbox("Show column dendrogram", value=False, disabled=True,
-                                           help="Coming soon")
-            
-            # Row 2: Clustering options
-            hm_col5, hm_col6, hm_col7, hm_col8 = st.columns(4)
-            
-            with hm_col5:
-                do_cluster_rows = st.checkbox("Cluster rows (genes)", value=cluster_rows)
-            
-            with hm_col6:
-                do_cluster_cols = st.checkbox("Cluster columns", value=cluster_cols)
-            
-            with hm_col7:
-                row_font = st.slider("Gene label size", 6, 14, 9)
-            
-            with hm_col8:
-                col_font = st.slider("Column label size", 6, 14, 9)
-            
-            # Row 3: Legend position
-            hm_col9, hm_col10, hm_col11, hm_col12 = st.columns(4)
-            
-            with hm_col9:
                 legend_pos = st.selectbox(
                     "Legend position",
                     options=["Bottom", "Right", "Left", "Top"],
-                    index=0,
-                    help="Position of the annotation legend"
+                    index=0
                 )
-                legend_position = legend_pos.lower()
             
-            # Create heatmap matrix
-            matrix, col_meta = create_heatmap_matrix(
-                filtered_df,
-                value_col=value_metric,
-                scale_rows=scale_rows
-            )
+            hm_col5, hm_col6, hm_col7, hm_col8 = st.columns(4)
             
-            # Create and display heatmap using new ComplexHeatmap-like function
+            with hm_col5:
+                do_cluster_rows = st.checkbox("Cluster rows", value=cluster_rows)
+            with hm_col6:
+                do_cluster_cols = st.checkbox("Cluster columns", value=cluster_cols)
+            with hm_col7:
+                row_font = st.slider("Gene label size", 6, 14, 9)
+            with hm_col8:
+                col_font = st.slider("Column label size", 6, 14, 9)
+            
+            # Create and display heatmap
+            matrix, col_meta = create_heatmap_matrix(filtered_df, value_col=value_metric, scale_rows=scale_rows)
+            
             fig = create_complexheatmap(
                 matrix=matrix,
                 col_meta=col_meta,
@@ -1090,31 +1421,23 @@ def main():
                 color_scale=color_scale,
                 split_by=split_by,
                 annotation_col=annotation_col,
-                show_row_dendrogram=show_row_dend,
-                show_col_dendrogram=show_col_dend,
                 cluster_rows=do_cluster_rows,
                 cluster_cols=do_cluster_cols,
                 row_label_size=row_font,
                 col_label_size=col_font,
-                legend_position=legend_position
+                legend_position=legend_pos.lower()
             )
             
             st.plotly_chart(fig, use_container_width=True)
             
-            # Download matrix
             with st.expander("📥 Download Matrix"):
                 csv = matrix.to_csv()
-                st.download_button(
-                    "Download as CSV",
-                    csv,
-                    "expression_matrix.csv",
-                    "text/csv"
-                )
+                st.download_button("Download as CSV", csv, "expression_matrix.csv", "text/csv")
     
     # --------------------------------------------------------------------------
-    # Tab 2: Dot Plot
+    # Tab 3: Dot Plot
     # --------------------------------------------------------------------------
-    with tab2:
+    with tab_dotplot:
         if filtered_df.empty or not selected_genes:
             st.info("Select filters and genes to generate a dot plot.")
         else:
@@ -1134,95 +1457,61 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # Tab 3: Temporal Dynamics
+    # Tab 4: Temporal Dynamics
     # --------------------------------------------------------------------------
-    with tab3:
+    with tab_temporal:
         st.markdown("""
         **Note:** Temporal dynamics visualization requires developmental timepoint annotations.
         Currently showing expression across datasets as a proxy.
-        
-        *For full temporal analysis, add `timepoint`, `pseudotime`, or `developmental_stage` 
-        columns to your data.*
         """)
         
         if filtered_df.empty or not selected_genes:
             st.info("Select filters and genes to visualize temporal dynamics.")
         else:
-            fig = create_temporal_plot(
-                filtered_df,
-                selected_genes,
-                time_col='tissue',
-                value_col=value_metric
-            )
-            
+            fig = create_temporal_plot(filtered_df, selected_genes, time_col='tissue', value_col=value_metric)
             st.plotly_chart(fig, use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # Tab 4: Species Comparison
+    # Tab 5: Species Comparison
     # --------------------------------------------------------------------------
-    with tab4:
+    with tab_species:
         if filtered_df.empty or not selected_genes:
             st.info("Select filters and genes to compare across species.")
         elif filtered_df['species'].nunique() < 2:
             st.warning("Select multiple species to enable cross-species comparison.")
         else:
-            fig = create_species_comparison_plot(
-                filtered_df,
-                selected_genes[:6],  # Limit to 6 genes for readability
-                value_col=value_metric
-            )
-            
+            fig = create_species_comparison_plot(filtered_df, selected_genes[:6], value_col=value_metric)
             st.plotly_chart(fig, use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # Tab 5: Data Table
+    # Tab 6: Data Table
     # --------------------------------------------------------------------------
-    with tab5:
+    with tab_table:
         if filtered_df.empty:
             st.info("No data matches your current filters.")
         else:
-            # Merge with risk gene info
             display_df = filtered_df.copy()
             display_df['gene_display'] = display_df['gene_human'].fillna(display_df['gene_native'])
             
-            # Add SFARI score if available
             if 'gene_symbol' in risk_genes.columns:
                 risk_lookup = risk_genes.set_index('gene_symbol')['gene_score'].to_dict()
                 display_df['SFARI_score'] = display_df['gene_display'].map(risk_lookup)
             
-            # Column selection
-            st.markdown("**Select columns to display:**")
             available_cols = display_df.columns.tolist()
             default_cols = ['gene_display', 'species', 'tissue', 'cell_type', 'mean_expr', 'pct_expressing', 'n_cells']
             default_cols = [c for c in default_cols if c in available_cols]
             
-            selected_cols = st.multiselect(
-                "Columns",
-                options=available_cols,
-                default=default_cols,
-                label_visibility="collapsed"
-            )
+            selected_cols = st.multiselect("Columns", options=available_cols, default=default_cols, label_visibility="collapsed")
             
             if selected_cols:
-                st.dataframe(
-                    display_df[selected_cols].sort_values(['gene_display', 'species', 'tissue']),
-                    height=500,
-                    use_container_width=True
-                )
-                
-                # Download
+                st.dataframe(display_df[selected_cols].sort_values(['gene_display', 'species', 'tissue']), height=500, use_container_width=True)
                 csv = display_df[selected_cols].to_csv(index=False)
-                st.download_button(
-                    "📥 Download Table as CSV",
-                    csv,
-                    "filtered_expression_data.csv",
-                    "text/csv"
-                )
+                st.download_button("📥 Download Table as CSV", csv, "filtered_expression_data.csv", "text/csv")
     
     # --------------------------------------------------------------------------
-    # Tab 6: About & Datasets
+    # Tab 7: About & Datasets
     # --------------------------------------------------------------------------
-    with tab6:
+    with tab_about:
         st.markdown("""
         ## About SFARI Gene Expression Explorer
         
@@ -1242,103 +1531,58 @@ def main():
         
         ## Datasets
         
-        The following single-cell RNA-seq datasets are included in this resource:
+        The following single-cell RNA-seq datasets are included:
         
         ### Human Datasets
         
-        | Dataset | Publication | Journal | Species | Description |
-        |---------|-------------|---------|---------|-------------|
-        | **He (2024)** | He et al., 2024 | *Nature* | Human | Human Neural Organoid Cell Atlas (HNOCA) |
-        | **Bhaduri (2021)** | Bhaduri et al., 2021 | *Nature* | Human | Primary human cortical development |
-        | **Braun (2023)** | Braun et al., 2023 | *Science* | Human | Human brain cell atlas |
-        | **Velmeshev (2023)** | Velmeshev et al., 2023 | *Science* | Human | Developing human brain cell types |
-        | **Velmeshev (2019)** | Velmeshev et al., 2019 | *Science* | Human | Single-cell genomics of ASD brain |
-        | **Zhu (2023)** | Zhu et al., 2023 | *Science Advances* | Human | Human fetal brain development |
-        | **Wang (2025)** | Wang et al., 2025 | *Nature* | Human | Human brain development atlas |
-        | **Wang (2022)** | Wang et al., 2022 | *Nature Communications* | Human | Human cerebral organoids |
+        | Dataset | Sample Type | Description |
+        |---------|-------------|-------------|
+        | **He (2024)** | Organoid | Human Neural Organoid Cell Atlas (HNOCA) |
+        | **Bhaduri (2021)** | Primary | Primary human cortical development |
+        | **Braun (2023)** | Primary | Human brain cell atlas |
+        | **Velmeshev (2023)** | Primary | Developing human brain cell types |
+        | **Velmeshev (2019)** | Primary | Single-cell genomics of ASD brain |
+        | **Zhu (2023)** | Primary | Human fetal brain development |
+        | **Wang (2025)** | Primary | Human brain development atlas |
+        | **Wang (2022)** | Organoid | Human cerebral organoids |
         
         ### Mouse Datasets
         
-        | Dataset | Publication | Journal | Species | Description |
-        |---------|-------------|---------|---------|-------------|
-        | **La Manno (2021)** | La Manno et al., 2021 | *Nature* | Mouse | Mouse brain development atlas |
-        | **Jin (2025)** | Jin et al., 2025 | *Nature* | Mouse | Mouse brain cell atlas |
-        | **Sziraki (2023)** | Sziraki et al., 2023 | *Nature Genetics* | Mouse | Mouse brain cell types |
+        | Dataset | Description |
+        |---------|-------------|
+        | **La Manno (2021)** | Mouse brain development atlas |
+        | **Jin (2025)** | Mouse brain cell atlas |
+        | **Sziraki (2023)** | Mouse brain cell types (aging) |
         
-        ### Zebrafish Datasets
+        ### Other Species
         
-        | Dataset | Publication | Journal | Species | Description |
-        |---------|-------------|---------|---------|-------------|
-        | **Raj (2020)** | Raj et al., 2020 | *Neuroscience* | Zebrafish | Zebrafish brain development |
-        
-        ### Drosophila Datasets
-        
-        | Dataset | Publication | Journal | Species | Description |
-        |---------|-------------|---------|---------|-------------|
-        | **Davie (2018)** | Davie et al., 2018 | *Cell* | Drosophila | *Drosophila* brain cell atlas |
+        | Dataset | Species | Description |
+        |---------|---------|-------------|
+        | **Raj (2020)** | Zebrafish | Zebrafish brain development |
+        | **Davie (2018)** | Drosophila | *Drosophila* brain cell atlas |
         
         ---
         
         ## Data Processing
         
-        Expression data was processed as follows:
-        1. **Raw counts** were obtained from original publications
-        2. **Cell type annotations** were harmonized across datasets into common supercategories
-        3. **Gene symbols** were mapped to human orthologs for cross-species comparison
-        4. **Expression summaries** (mean expression, % expressing) were computed per cell type per dataset
+        1. **Integration**: Datasets were integrated using scVI/scANVI
+        2. **Cell type harmonization**: Unified cell type labels across datasets
+        3. **Batch correction**: Within-organism ComBat correction preserving biological covariates
+        4. **Pseudobulk aggregation**: Expression summarized per cell type per sample
         
-        ### Cell Type Categories
-        
-        Cell types were harmonized into the following supercategories:
-        """)
-        
-        # Display cell type legend
-        celltype_df = pd.DataFrame([
-            {"Category": "Excitatory Neurons", "Description": "Glutamatergic projection neurons"},
-            {"Category": "Inhibitory Neurons", "Description": "GABAergic interneurons"},
-            {"Category": "Neural Progenitors & Stem Cells", "Description": "NPCs, radial glia, neural stem cells"},
-            {"Category": "Astrocytes", "Description": "Astrocytes and astrocyte precursors"},
-            {"Category": "Oligodendrocyte Lineage", "Description": "OPCs, oligodendrocytes"},
-            {"Category": "Microglia & Macrophages", "Description": "Brain-resident immune cells"},
-            {"Category": "Endothelial & Vascular Cells", "Description": "Blood vessel cells"},
-            {"Category": "Other Glia & Support", "Description": "Other glial cell types"},
-            {"Category": "Neurons (unspecified)", "Description": "Neurons without E/I classification"},
-            {"Category": "Early Embryonic / Germ Layers", "Description": "Early developmental cell types"},
-        ])
-        st.dataframe(celltype_df, hide_index=True, use_container_width=True)
-        
-        st.markdown("""
         ---
         
         ## SFARI Gene Integration
         
         This explorer integrates the [SFARI Gene database](https://gene.sfari.org/), which catalogs 
-        genes implicated in autism spectrum disorder (ASD). Genes are scored based on strength of evidence:
-        
-        - **Score 1 (High Confidence)**: Strong evidence from multiple studies
-        - **Score 2**: Moderate evidence  
-        - **Score 3**: Suggestive evidence
-        
-        Use the "Quick Gene Sets" dropdown in the sidebar to quickly load SFARI risk genes.
+        genes implicated in autism spectrum disorder (ASD).
         
         ---
         
         ## Citation
         
         If you use this resource in your research, please cite the original data publications 
-        listed above and this tool:
-        
-        ```
-        SFARI Gene Expression Explorer (2025)
-        https://github.com/ar-kie/SFARIExplorer
-        ```
-        
-        ---
-        
-        ## Contact & Feedback
-        
-        For questions, bug reports, or feature requests, please open an issue on 
-        [GitHub](https://github.com/ar-kie/SFARIExplorer/issues).
+        and this tool.
         """)
     
     # ==========================================================================

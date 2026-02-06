@@ -196,86 +196,130 @@ def create_dotplot(df, genes, group_by='cell_type'):
     return fig
 
 def create_temporal_trajectory_plot(temporal_df, genes, species='Human', sample_type='in_vivo', cell_types=None, value_col='mean_expr'):
-    df = temporal_df[temporal_df['species'] == species].copy()
-    if 'sample_type' in df.columns and sample_type: df = df[df['sample_type'] == sample_type]
-    genes_upper = [g.upper() for g in genes]
-    df = df[df['gene_human'].str.upper().isin(genes_upper)]
-    if cell_types: df = df[df['cell_type'].isin(cell_types)]
-    if df.empty:
+    try:
+        df = temporal_df[temporal_df['species'] == species].copy()
+        if 'sample_type' in df.columns and sample_type: 
+            df = df[df['sample_type'] == sample_type]
+        
+        # Handle gene matching with NaN protection
+        genes_upper = [g.upper() for g in genes]
+        df = df[df['gene_human'].notna()]  # Remove NaN gene_human first
+        df = df[df['gene_human'].str.upper().isin(genes_upper)]
+        
+        if cell_types and len(cell_types) > 0: 
+            df = df[df['cell_type'].isin(cell_types)]
+        
+        if df.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="No temporal data for selected genes/filters", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            return fig
+        
+        df = df.sort_values('time_order')
         fig = go.Figure()
-        fig.add_annotation(text="No temporal data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        unique_genes = df['gene_human'].unique()
+        gene_colors = get_color_palette(list(unique_genes), 'auto')
+        
+        for gene in unique_genes:
+            gd = df[df['gene_human'] == gene]
+            for ct in gd['cell_type'].unique():
+                cd = gd[gd['cell_type'] == ct]
+                if cd.empty:
+                    continue
+                agg = cd.groupby(['time_bin', 'time_order']).agg({value_col: 'mean'}).reset_index().sort_values('time_order')
+                if not agg.empty:
+                    fig.add_trace(go.Scatter(x=agg['time_bin'], y=agg[value_col], mode='lines+markers', name=f"{gene} - {ct}", line=dict(color=gene_colors[gene]), marker=dict(size=8)))
+        
+        title_map = {'Human': 'Human Development' if sample_type != 'organoid' else 'Organoid Differentiation', 'Mouse': 'Mouse Development', 'Zebrafish': 'Zebrafish Development', 'Drosophila': 'Drosophila Aging'}
+        fig.update_layout(title=f"Temporal Expression - {title_map.get(species, species)}", xaxis_title="Developmental Stage", yaxis_title="Mean Expression", height=500, legend=dict(orientation='h', y=-0.3, x=0.5, xanchor='center'))
         return fig
-    
-    df = df.sort_values('time_order')
-    fig = go.Figure()
-    gene_colors = get_color_palette(list(df['gene_human'].unique()), 'auto')
-    
-    for gene in df['gene_human'].unique():
-        gd = df[df['gene_human'] == gene]
-        for ct in gd['cell_type'].unique():
-            cd = gd[gd['cell_type'] == ct]
-            agg = cd.groupby(['time_bin', 'time_order']).agg({value_col: 'mean'}).reset_index().sort_values('time_order')
-            fig.add_trace(go.Scatter(x=agg['time_bin'], y=agg[value_col], mode='lines+markers', name=f"{gene} - {ct}", line=dict(color=gene_colors[gene]), marker=dict(size=8)))
-    
-    title_map = {'Human': 'Human Development' if sample_type != 'organoid' else 'Organoid Differentiation', 'Mouse': 'Mouse Development', 'Zebrafish': 'Zebrafish Development', 'Drosophila': 'Drosophila Aging'}
-    fig.update_layout(title=f"Temporal Expression - {title_map.get(species, species)}", xaxis_title="Developmental Stage", yaxis_title="Mean Expression", height=500, legend=dict(orientation='h', y=-0.3, x=0.5, xanchor='center'))
-    return fig
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error: {str(e)}", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
 
 def create_temporal_heatmap(temporal_df, genes, species='Human', sample_type='in_vivo', cell_type=None, value_col='mean_expr'):
-    df = temporal_df[temporal_df['species'] == species].copy()
-    if 'sample_type' in df.columns and sample_type: df = df[df['sample_type'] == sample_type]
-    genes_upper = [g.upper() for g in genes]
-    df = df[df['gene_human'].str.upper().isin(genes_upper)]
-    if cell_type: df = df[df['cell_type'] == cell_type]
-    if df.empty:
-        fig = go.Figure()
-        fig.add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+    try:
+        df = temporal_df[temporal_df['species'] == species].copy()
+        if 'sample_type' in df.columns and sample_type: 
+            df = df[df['sample_type'] == sample_type]
+        genes_upper = [g.upper() for g in genes]
+        df = df[df['gene_human'].notna()]
+        df = df[df['gene_human'].str.upper().isin(genes_upper)]
+        if cell_type: 
+            df = df[df['cell_type'] == cell_type]
+        if df.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="No data for selected filters", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            return fig
+        
+        agg = df.groupby(['gene_human', 'time_bin', 'time_order']).agg({value_col: 'mean'}).reset_index()
+        pivot = agg.pivot_table(index='gene_human', columns='time_bin', values=value_col, aggfunc='mean')
+        if pivot.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="No data to display", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            return fig
+        
+        time_order = agg.groupby('time_bin')['time_order'].first().to_dict()
+        sorted_cols = sorted(pivot.columns, key=lambda x: time_order.get(x, 99))
+        pivot = pivot[[c for c in sorted_cols if c in pivot.columns]]
+        
+        row_means, row_stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
+        pivot_scaled = pivot.sub(row_means, axis=0).div(row_stds, axis=0).clip(-3, 3)
+        
+        fig = go.Figure(go.Heatmap(z=pivot_scaled.values, x=pivot_scaled.columns.tolist(), y=pivot_scaled.index.tolist(), colorscale='RdBu_r', zmid=0, zmin=-3, zmax=3, colorbar=dict(title='Z-score')))
+        fig.update_layout(title=f"Temporal Heatmap - {species}" + (f" ({cell_type})" if cell_type else ""), xaxis_title="Time", yaxis_title="Gene", height=max(400, 50+len(genes)*20), xaxis=dict(tickangle=45), yaxis=dict(autorange='reversed'))
         return fig
-    
-    agg = df.groupby(['gene_human', 'time_bin', 'time_order']).agg({value_col: 'mean'}).reset_index()
-    pivot = agg.pivot_table(index='gene_human', columns='time_bin', values=value_col, aggfunc='mean')
-    time_order = agg.groupby('time_bin')['time_order'].first().to_dict()
-    pivot = pivot[[c for c in sorted(pivot.columns, key=lambda x: time_order.get(x, 99))]]
-    
-    row_means, row_stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
-    pivot_scaled = pivot.sub(row_means, axis=0).div(row_stds, axis=0).clip(-3, 3)
-    
-    fig = go.Figure(go.Heatmap(z=pivot_scaled.values, x=pivot_scaled.columns.tolist(), y=pivot_scaled.index.tolist(), colorscale='RdBu_r', zmid=0, zmin=-3, zmax=3, colorbar=dict(title='Z-score')))
-    fig.update_layout(title=f"Temporal Heatmap - {species}" + (f" ({cell_type})" if cell_type else ""), xaxis_title="Time", yaxis_title="Gene", height=max(400, 50+len(genes)*20), xaxis=dict(tickangle=45), yaxis=dict(autorange='reversed'))
-    return fig
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error: {str(e)}", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
 
 def create_species_expression_comparison(ortholog_df, genes, cell_types=None):
-    df = ortholog_df.copy()
-    genes_upper = [g.upper() for g in genes]
-    df = df[df['gene_human'].str.upper().isin(genes_upper)]
-    if cell_types: df = df[df['cell_type'].isin(cell_types)]
-    if df.empty:
-        fig = go.Figure()
-        fig.add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+    try:
+        df = ortholog_df.copy()
+        genes_upper = [g.upper() for g in genes]
+        df = df[df['gene_human'].notna()]
+        df = df[df['gene_human'].str.upper().isin(genes_upper)]
+        if cell_types and len(cell_types) > 0: 
+            df = df[df['cell_type'].isin(cell_types)]
+        if df.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="No data for selected genes", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            return fig
+        agg = df.groupby(['gene_human', 'species']).agg({'mean_expr': 'mean'}).reset_index()
+        fig = px.bar(agg, x='gene_human', y='mean_expr', color='species', barmode='group', color_discrete_map=SPECIES_COLORS, title="Cross-Species Expression")
+        fig.update_layout(height=450, xaxis_tickangle=45, legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'))
         return fig
-    agg = df.groupby(['gene_human', 'species']).agg({'mean_expr': 'mean'}).reset_index()
-    fig = px.bar(agg, x='gene_human', y='mean_expr', color='species', barmode='group', color_discrete_map=SPECIES_COLORS, title="Cross-Species Expression")
-    fig.update_layout(height=450, xaxis_tickangle=45, legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'))
-    return fig
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error: {str(e)}", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
 
 def create_ortholog_scatter(ortholog_df, gene, species_x, species_y):
-    df = ortholog_df[ortholog_df['gene_human'].str.upper() == gene.upper()]
-    df_x = df[df['species'] == species_x][['cell_type', 'mean_expr']].rename(columns={'mean_expr': 'expr_x'})
-    df_y = df[df['species'] == species_y][['cell_type', 'mean_expr']].rename(columns={'mean_expr': 'expr_y'})
-    merged = df_x.merge(df_y, on='cell_type', how='inner')
-    if merged.empty:
-        fig = go.Figure()
-        fig.add_annotation(text=f"No common cell types", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+    try:
+        df = ortholog_df[ortholog_df['gene_human'].notna()]
+        df = df[df['gene_human'].str.upper() == gene.upper()]
+        df_x = df[df['species'] == species_x][['cell_type', 'mean_expr']].rename(columns={'mean_expr': 'expr_x'})
+        df_y = df[df['species'] == species_y][['cell_type', 'mean_expr']].rename(columns={'mean_expr': 'expr_y'})
+        merged = df_x.merge(df_y, on='cell_type', how='inner')
+        if merged.empty:
+            fig = go.Figure()
+            fig.add_annotation(text=f"No common cell types", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            return fig
+        
+        corr_text = f"ρ = {spearmanr(merged['expr_x'], merged['expr_y'])[0]:.3f}" if len(merged) >= 3 else ""
+        fig = px.scatter(merged, x='expr_x', y='expr_y', color='cell_type', color_discrete_map=CELLTYPE_COLORS, title=f"{gene.upper()}: {species_x} vs {species_y}")
+        max_val = max(merged['expr_x'].max(), merged['expr_y'].max())
+        fig.add_trace(go.Scatter(x=[0, max_val], y=[0, max_val], mode='lines', line=dict(dash='dash', color='gray'), showlegend=False))
+        if corr_text: 
+            fig.add_annotation(text=corr_text, xref="paper", yref="paper", x=0.95, y=0.05, showarrow=False)
+        fig.update_traces(marker=dict(size=12))
+        fig.update_layout(height=500, xaxis_title=f'{species_x} Expression', yaxis_title=f'{species_y} Expression')
         return fig
-    
-    corr_text = f"ρ = {spearmanr(merged['expr_x'], merged['expr_y'])[0]:.3f}" if len(merged) >= 3 else ""
-    fig = px.scatter(merged, x='expr_x', y='expr_y', color='cell_type', color_discrete_map=CELLTYPE_COLORS, title=f"{gene.upper()}: {species_x} vs {species_y}")
-    max_val = max(merged['expr_x'].max(), merged['expr_y'].max())
-    fig.add_trace(go.Scatter(x=[0, max_val], y=[0, max_val], mode='lines', line=dict(dash='dash', color='gray'), showlegend=False))
-    if corr_text: fig.add_annotation(text=corr_text, xref="paper", yref="paper", x=0.95, y=0.05, showarrow=False)
-    fig.update_traces(marker=dict(size=12))
-    fig.update_layout(height=500, xaxis_title=f'{species_x} Expression', yaxis_title=f'{species_y} Expression')
-    return fig
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error: {str(e)}", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
 
 def create_variance_partition_barplot(vp_summary):
     colors = {'Before Correction': '#ff7f0e', 'After Correction': '#1f77b4'}
@@ -297,7 +341,7 @@ def create_variance_change_plot(vp_summary):
 
 # Main App
 def main():
-    st.title("🧬 SFARI Gene Expression Explorer")
+    st.title("🧬 SFARIExplorer")
     st.markdown("*Cross-species single-cell RNA-seq browser for neurodevelopmental gene expression*")
     
     data = load_data()
@@ -368,7 +412,7 @@ def main():
         st.divider()
         if data['batch_correction'] is not None:
             st.subheader("🔧 Batch Correction")
-            st.markdown('<div class="info-box"><strong>Approach:</strong> Within-organism ComBat correction preserving cell type and developmental time.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-box"><strong>Approach:</strong> Within-organism limma correction preserving cell type and developmental time.</div>', unsafe_allow_html=True)
             for _, r in data['batch_correction'].iterrows():
                 if r.get('correction_applied', False): st.markdown(f"- **{r['correction_group']}**: {r['n_datasets']} datasets ({r['method']})")
         
@@ -479,7 +523,7 @@ def main():
     # About Tab
     with tabs[7]:
         st.markdown("""
-## About SFARI Gene Expression Explorer
+## About SFARIExplorer
 
 Explore gene expression across single-cell RNA-seq datasets from developing brain (Human, Mouse, Zebrafish, Drosophila).
 
@@ -503,7 +547,7 @@ Zebrafish: Raj (2020) | Drosophila: Davie (2018)
         """)
     
     st.divider()
-    st.markdown('<div style="text-align:center;color:#666;font-size:0.9rem;">SFARI Gene Explorer | Streamlit & Plotly</div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;color:#666;font-size:0.9rem;">SFARIExplorer | Streamlit & Plotly</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

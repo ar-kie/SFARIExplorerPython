@@ -157,9 +157,19 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         fig.add_annotation(text="No data to display", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
+    # Apply Z-score scaling if requested
     if scale_rows and pivot.shape[0] > 0:
         means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
         pivot = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
+        zmin, zmax, zmid = -3, 3, 0
+        cbar_title = 'Z-score'
+        colorscale = 'RdBu_r'
+    else:
+        # Use actual data range for non-scaled
+        zmin, zmax = pivot.min().min(), pivot.max().max()
+        zmid = (zmin + zmax) / 2
+        cbar_title = 'Mean Expr' if value_col == 'mean_expr' else '% Expressing'
+        colorscale = 'Viridis'
     
     col_meta = pd.DataFrame([{'col_key': c, 'species': c.split('|')[0], 'dataset': c.split('|')[1], 
                               'cell_type': c.split('|')[2]} for c in pivot.columns]).set_index('col_key')
@@ -221,8 +231,8 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         
         hm_row = 2 if has_anno else 1
         fig.add_trace(go.Heatmap(z=mat.values, x=labels, y=mat.index.tolist(),
-                     colorscale='RdBu_r', zmid=0, zmin=-3, zmax=3, showscale=not cbar_added,
-                     colorbar=dict(title='Z-score', thickness=12, len=0.6) if not cbar_added else None),
+                     colorscale=colorscale, zmid=zmid if scale_rows else None, zmin=zmin, zmax=zmax, showscale=not cbar_added,
+                     colorbar=dict(title=cbar_title, thickness=12, len=0.6) if not cbar_added else None),
                      row=hm_row, col=col_idx)
         cbar_added = True
     
@@ -654,27 +664,53 @@ def main():
     # ==========================================================================
     with st.sidebar:
         st.header("🧬 Step 1: Select Genes")
-        st.markdown('<div class="gene-box"><b>Start here!</b> Enter genes first, then explore tabs.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="gene-box"><b>Start here!</b> Enter genes, then explore tabs.</div>', unsafe_allow_html=True)
         
-        gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "Top Variable"], key='preset')
+        gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"], key='preset')
         preset_genes = ""
         if gene_preset == "SFARI Score 1":
-            preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist()[:30])
+            preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
         elif gene_preset == "SFARI Score 2":
-            preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist()[:30])
+            preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
+        elif gene_preset == "SFARI Syndromic":
+            if 'syndromic' in risk_genes.columns:
+                preset_genes = ", ".join(risk_genes[risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist())
         elif gene_preset == "Top Variable":
-            preset_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(20).index.tolist())
+            preset_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
         
-        gene_input = st.text_area("Enter genes (comma separated)", value=preset_genes, height=100, 
-                                  placeholder="e.g., SHANK3, MECP2, CHD8, SCN2A")
-        selected_genes = parse_genes(gene_input)
+        # Use text_input for mobile compatibility (submits on Enter)
+        gene_input = st.text_input("Enter genes (comma separated)", value=preset_genes,
+                                   placeholder="SHANK3, MECP2, CHD8")
         
-        if len(selected_genes) >= 2:
-            st.success(f"✓ {len(selected_genes)} genes selected")
-        elif len(selected_genes) == 1:
-            st.warning("Add at least 1 more gene for heatmaps")
+        # For longer lists, provide expandable text area
+        with st.expander("📝 Enter many genes"):
+            gene_input_long = st.text_area("Paste gene list here", height=100, 
+                                           placeholder="One gene per line or comma-separated")
+            if gene_input_long.strip():
+                gene_input = gene_input_long
+        
+        input_genes = parse_genes(gene_input)
+        
+        # Check which genes are in the database
+        all_genes_in_db = set(expr_df['gene_human'].dropna().str.upper().unique()) | set(expr_df['gene_native'].dropna().str.upper().unique())
+        found_genes = [g for g in input_genes if g in all_genes_in_db]
+        not_found_genes = [g for g in input_genes if g not in all_genes_in_db]
+        
+        selected_genes = found_genes  # Only use genes that exist
+        
+        # Show feedback
+        if len(input_genes) > 0:
+            if len(found_genes) >= 2:
+                st.success(f"✓ {len(found_genes)} genes found")
+            elif len(found_genes) == 1:
+                st.warning(f"1 gene found (need 2+ for heatmaps)")
+            else:
+                st.error("No matching genes found")
+            
+            if not_found_genes:
+                st.caption(f"⚠️ Not in database: {', '.join(not_found_genes[:5])}{'...' if len(not_found_genes) > 5 else ''}")
         else:
-            st.error("⚠️ Enter genes above to begin")
+            st.info("Enter gene names above")
         
         st.divider()
         st.subheader("⚙️ Display Options")

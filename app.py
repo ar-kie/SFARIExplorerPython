@@ -667,6 +667,8 @@ def main():
         st.markdown('<div class="gene-box"><b>Start here!</b> Enter genes, then explore tabs.</div>', unsafe_allow_html=True)
         
         gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"], key='preset')
+        
+        # Build preset gene list
         preset_genes = ""
         if gene_preset == "SFARI Score 1":
             preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
@@ -678,16 +680,17 @@ def main():
         elif gene_preset == "Top Variable":
             preset_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
         
-        # Use text_input for mobile compatibility (submits on Enter)
-        gene_input = st.text_input("Enter genes (comma separated)", value=preset_genes,
-                                   placeholder="SHANK3, MECP2, CHD8")
+        # Single scrollable text area for all gene input
+        gene_input = st.text_area(
+            "Enter genes (comma or space separated)", 
+            value=preset_genes,
+            height=150,
+            placeholder="SHANK3, MECP2, CHD8, SCN2A\nor paste a list here",
+            key='gene_input'
+        )
         
-        # For longer lists, provide expandable text area
-        with st.expander("📝 Enter many genes"):
-            gene_input_long = st.text_area("Paste gene list here", height=100, 
-                                           placeholder="One gene per line or comma-separated")
-            if gene_input_long.strip():
-                gene_input = gene_input_long
+        # Add submit button for mobile
+        st.button("🔍 Search Genes", type="primary", use_container_width=True)
         
         input_genes = parse_genes(gene_input)
         
@@ -701,14 +704,15 @@ def main():
         # Show feedback
         if len(input_genes) > 0:
             if len(found_genes) >= 2:
-                st.success(f"✓ {len(found_genes)} genes found")
+                st.success(f"✓ {len(found_genes)} genes found in database")
             elif len(found_genes) == 1:
                 st.warning(f"1 gene found (need 2+ for heatmaps)")
             else:
                 st.error("No matching genes found")
             
             if not_found_genes:
-                st.caption(f"⚠️ Not in database: {', '.join(not_found_genes[:5])}{'...' if len(not_found_genes) > 5 else ''}")
+                with st.expander(f"⚠️ {len(not_found_genes)} genes not in database"):
+                    st.caption(", ".join(not_found_genes))
         else:
             st.info("Enter gene names above")
         
@@ -862,63 +866,72 @@ def main():
         elif not selected_genes:
             st.warning("⬅️ Enter genes in the sidebar first")
         else:
-            temporal_df = data['temporal']
-            
-            viz_type = st.selectbox("View", ["Trajectory", "Heatmap", "Multi-Species", "Timepoint Snapshot"], key='temp_viz')
-            
-            if viz_type != "Multi-Species":
-                tc1, tc2 = st.columns(2)
-                with tc1:
-                    temp_species = st.selectbox("Species", temporal_df['species'].unique().tolist(), key='temp_sp')
-                with tc2:
-                    temp_sample_type = 'in_vivo'
-                    if temp_species == 'Human' and 'sample_type' in temporal_df.columns:
-                        st_opts = temporal_df[temporal_df['species'] == 'Human']['sample_type'].dropna().unique().tolist()
-                        if st_opts:
-                            st_display = [SAMPLE_TYPE_DISPLAY.get(s, s) for s in st_opts]
-                            sel = st.selectbox("Sample Type", st_display, key='temp_st')
-                            temp_sample_type = st_opts[st_display.index(sel)]
+            try:
+                temporal_df = data['temporal']
                 
-                sp_df = temporal_df[temporal_df['species'] == temp_species]
-                if 'sample_type' in sp_df.columns:
-                    sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
-                avail_temp_cts = sp_df['cell_type'].unique().tolist()
-            else:
-                temp_species = None
-                temp_sample_type = None
-                avail_temp_cts = temporal_df['cell_type'].unique().tolist()
-            
-            sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, 
-                                          default=avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts, key='temp_cts')
-            
-            if viz_type == "Trajectory":
-                fig = create_temporal_trajectory(temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif viz_type == "Heatmap":
-                hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct')
-                fig = create_temporal_heatmap(temporal_df, selected_genes, temp_species, temp_sample_type, 
-                                             hm_ct if hm_ct != 'All' else None, value_metric)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif viz_type == "Multi-Species":
-                comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp')
-                fig = create_multi_species_comparison(temporal_df, comp_gene, sel_temp_cts, value_metric)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif viz_type == "Timepoint Snapshot":
-                sp_df = temporal_df[temporal_df['species'] == temp_species]
-                if 'sample_type' in sp_df.columns:
-                    sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
-                avail_bins = sort_time_bins(sp_df['time_bin'].dropna().unique().tolist())
+                viz_type = st.selectbox("View", ["Trajectory", "Heatmap", "Multi-Species", "Timepoint Snapshot"], key='temp_viz')
+                
+                if viz_type != "Multi-Species":
+                    tc1, tc2 = st.columns(2)
+                    with tc1:
+                        temp_species = st.selectbox("Species", temporal_df['species'].unique().tolist(), key='temp_sp')
+                    with tc2:
+                        temp_sample_type = 'in_vivo'
+                        if temp_species == 'Human' and 'sample_type' in temporal_df.columns:
+                            st_opts = temporal_df[temporal_df['species'] == 'Human']['sample_type'].dropna().unique().tolist()
+                            if st_opts:
+                                st_display = [SAMPLE_TYPE_DISPLAY.get(s, s) for s in st_opts]
+                                sel = st.selectbox("Sample Type", st_display, key='temp_st')
+                                temp_sample_type = st_opts[st_display.index(sel)]
+                    
+                    sp_df = temporal_df[temporal_df['species'] == temp_species]
+                    if 'sample_type' in sp_df.columns:
+                        sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
+                    avail_temp_cts = sorted(sp_df['cell_type'].unique().tolist())
+                else:
+                    temp_species = None
+                    temp_sample_type = None
+                    avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
+                
+                # Limit default selection to avoid crashes
+                default_cts = avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts
+                sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=default_cts, key='temp_cts')
+                
+                # Warning if too many cell types selected
+                if len(sel_temp_cts) > 8:
+                    st.warning(f"⚠️ {len(sel_temp_cts)} cell types selected. Consider selecting fewer for better performance.")
+                
+                if viz_type == "Trajectory":
+                    fig = create_temporal_trajectory(temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts or None, value_metric)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                elif viz_type == "Heatmap":
+                    hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct')
+                    fig = create_temporal_heatmap(temporal_df, selected_genes, temp_species, temp_sample_type, 
+                                                 hm_ct if hm_ct != 'All' else None, value_metric)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                elif viz_type == "Multi-Species":
+                    comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp')
+                    fig = create_multi_species_comparison(temporal_df, comp_gene, sel_temp_cts or None, value_metric)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                elif viz_type == "Timepoint Snapshot":
+                    sp_df = temporal_df[temporal_df['species'] == temp_species]
+                    if 'sample_type' in sp_df.columns:
+                        sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
+                    avail_bins = sort_time_bins(sp_df['time_bin'].dropna().unique().tolist())
                 
                 if avail_bins:
                     sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin')
                     comp_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene')
-                    fig = create_timepoint_snapshot(temporal_df, comp_gene, sel_bin, sel_temp_cts, value_metric)
+                    fig = create_timepoint_snapshot(temporal_df, comp_gene, sel_bin, sel_temp_cts or None, value_metric)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("No timepoints available for this species/sample type")
+            except Exception as e:
+                st.error(f"Error in temporal visualization: {str(e)}")
+                st.info("Try selecting fewer cell types or different filters.")
     
     # --------------------------------------------------------------------------
     # Cross-Species Tab - WITH ITS OWN FILTERS

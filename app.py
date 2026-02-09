@@ -664,41 +664,29 @@ def main():
     # ==========================================================================
     with st.sidebar:
         st.header("🧬 Step 1: Select Genes")
-        st.markdown('<div class="gene-box"><b>Start here!</b> Enter genes, then explore tabs.</div>', unsafe_allow_html=True)
         
-        # Initialize session state for genes if not exists
-        if 'current_genes' not in st.session_state:
-            st.session_state.current_genes = ""
+        gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"])
         
-        gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"], key='preset')
+        # Build preset gene list based on selection
+        if gene_preset == "SFARI Score 1":
+            default_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
+        elif gene_preset == "SFARI Score 2":
+            default_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
+        elif gene_preset == "SFARI Syndromic":
+            default_genes = ", ".join(risk_genes[risk_genes.get('syndromic', pd.Series([0])) == 1]['gene_symbol'].dropna().tolist()) if 'syndromic' in risk_genes.columns else ""
+        elif gene_preset == "Top Variable":
+            default_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
+        else:
+            default_genes = ""
         
-        # Load preset button
-        if st.button("📥 Load Selected Set", use_container_width=True):
-            if gene_preset == "SFARI Score 1":
-                st.session_state.current_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
-            elif gene_preset == "SFARI Score 2":
-                st.session_state.current_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
-            elif gene_preset == "SFARI Syndromic":
-                if 'syndromic' in risk_genes.columns:
-                    st.session_state.current_genes = ", ".join(risk_genes[risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist())
-            elif gene_preset == "Top Variable":
-                st.session_state.current_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
-            st.rerun()
-        
-        # Single scrollable text area for all gene input
+        # Text area - use key based on preset to force refresh
         gene_input = st.text_area(
             "Enter genes (comma or space separated)", 
-            value=st.session_state.current_genes,
-            height=150,
-            placeholder="SHANK3, MECP2, CHD8, SCN2A\nor paste a list here"
+            value=default_genes,
+            height=120,
+            placeholder="SHANK3, MECP2, CHD8, SCN2A",
+            key=f"genes_{gene_preset}"  # Key changes with preset, forcing refresh
         )
-        
-        # Update session state when user types
-        if gene_input != st.session_state.current_genes:
-            st.session_state.current_genes = gene_input
-        
-        # Add submit button for mobile
-        st.button("🔍 Search Genes", type="primary", use_container_width=True)
         
         input_genes = parse_genes(gene_input)
         
@@ -707,22 +695,21 @@ def main():
         found_genes = [g for g in input_genes if g in all_genes_in_db]
         not_found_genes = [g for g in input_genes if g not in all_genes_in_db]
         
-        selected_genes = found_genes  # Only use genes that exist
+        selected_genes = found_genes
         
         # Show feedback
         if len(input_genes) > 0:
             if len(found_genes) >= 2:
-                st.success(f"✓ {len(found_genes)} genes found in database")
+                st.success(f"✓ {len(found_genes)} genes found")
             elif len(found_genes) == 1:
                 st.warning(f"1 gene found (need 2+ for heatmaps)")
             else:
                 st.error("No matching genes found")
             
             if not_found_genes:
-                with st.expander(f"⚠️ {len(not_found_genes)} genes not in database"):
-                    st.caption(", ".join(not_found_genes))
+                st.caption(f"⚠️ Not found: {', '.join(not_found_genes[:5])}{'...' if len(not_found_genes) > 5 else ''}")
         else:
-            st.info("Enter gene names above or load a preset")
+            st.info("Select a preset or enter genes")
         
         st.divider()
         st.subheader("⚙️ Display Options")
@@ -901,28 +888,14 @@ def main():
                     temp_sample_type = None
                     avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
                 
-                # Cell type selection with max limit
-                MAX_CELLTYPES = 6
-                st.caption(f"Select up to {MAX_CELLTYPES} cell types")
+                # Simple cell type selection - default to first 3
+                default_cts = avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts
+                sel_temp_cts = st.multiselect("Cell Types (select a few for best performance)", avail_temp_cts, default=default_cts)
                 
-                # Use session state to track selections and prevent rapid clicks
-                ct_key = f'temp_cts_{viz_type}'
-                if ct_key not in st.session_state:
-                    st.session_state[ct_key] = avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts
-                
-                # Filter out any invalid selections (in case species changed)
-                valid_selections = [ct for ct in st.session_state[ct_key] if ct in avail_temp_cts]
-                
-                sel_temp_cts = st.multiselect(
-                    "Cell Types", 
-                    avail_temp_cts, 
-                    default=valid_selections[:MAX_CELLTYPES],
-                    key=f'temp_cts_widget_{viz_type}',
-                    max_selections=MAX_CELLTYPES
-                )
-                
-                # Update session state
-                st.session_state[ct_key] = sel_temp_cts
+                # Limit to 8 cell types max to prevent performance issues
+                if len(sel_temp_cts) > 8:
+                    st.warning("⚠️ Too many cell types selected. Using first 8.")
+                    sel_temp_cts = sel_temp_cts[:8]
                 
                 if viz_type == "Trajectory":
                     fig = create_temporal_trajectory(temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts or None, value_metric)
@@ -945,13 +918,13 @@ def main():
                         sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
                     avail_bins = sort_time_bins(sp_df['time_bin'].dropna().unique().tolist())
                 
-                if avail_bins:
-                    sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin')
-                    comp_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene')
-                    fig = create_timepoint_snapshot(temporal_df, comp_gene, sel_bin, sel_temp_cts or None, value_metric)
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("No timepoints available for this species/sample type")
+                    if avail_bins:
+                        sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin')
+                        comp_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene')
+                        fig = create_timepoint_snapshot(temporal_df, comp_gene, sel_bin, sel_temp_cts or None, value_metric)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("No timepoints available for this species/sample type")
             except Exception as e:
                 st.error(f"Error in temporal visualization: {str(e)}")
                 st.info("Try selecting fewer cell types or different filters.")

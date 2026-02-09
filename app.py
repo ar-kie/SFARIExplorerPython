@@ -67,12 +67,20 @@ DATASET_COLORS = {
 }
 
 TIME_BIN_ORDER = {
+    # Human in-vivo
     'Early fetal (GW<10)': 1, 'Mid fetal (GW10-20)': 2, 'Late fetal (GW20-40)': 3,
     'Infant (0-2y)': 4, 'Child (2-12y)': 5, 'Adolescent (12-18y)': 6, 'Adult (18+y)': 7,
+    # Human organoid - various formats
     '0-30 days': 11, '31-60 days': 12, '61-90 days': 13, '91-120 days': 14, '>120 days': 15,
+    '0-30d': 11, '31-60d': 12, '61-90d': 13, '91-120d': 14, '>120d': 15,
+    'D0-30': 11, 'D31-60': 12, 'D61-90': 13, 'D91-120': 14, 'D>120': 15,
+    'Day 0-30': 11, 'Day 31-60': 12, 'Day 61-90': 13, 'Day 91-120': 14, 'Day >120': 15,
+    # Mouse
     'Early embryo (E<12)': 21, 'Mid embryo (E12-16)': 22, 'Late embryo (E16-20)': 23,
     'Neonatal (P0-P30)': 24, 'Juvenile (1-3mo)': 25, 'Adult (3-12mo)': 26, 'Aged (>12mo)': 27,
+    # Zebrafish
     '0-24 hpf': 31, '24-48 hpf': 32, '48-72 hpf': 33, '72-120 hpf (5dpf)': 34, '>5 dpf': 35,
+    # Drosophila
     '0-1 day': 41, '1-7 days': 42, '7-30 days': 43, '>30 days': 44,
 }
 
@@ -302,6 +310,11 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         fig.add_annotation(text="No data available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
+    if not cell_types:
+        fig = go.Figure()
+        fig.add_annotation(text="Select at least one cell type", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        return fig
+    
     try:
         df = temporal_df[temporal_df['species'] == species].copy()
         if 'sample_type' in df.columns and sample_type:
@@ -316,6 +329,7 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
             fig.add_annotation(text=f"No data for selected genes in {species}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
+        # Get sorted time bins for this data
         bins = sort_time_bins(df['time_bin'].dropna().unique().tolist())
         if not bins:
             fig = go.Figure()
@@ -357,7 +371,9 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
             title=f"{species} {sample_disp} - Temporal Expression",
             xaxis_title="Developmental Stage", yaxis_title="Mean Expression",
             height=480, legend=dict(orientation='v', y=1, x=1.02, xanchor='left'),
-            margin=dict(b=80, r=140)
+            margin=dict(b=80, r=140),
+            # Force x-axis category order
+            xaxis=dict(categoryorder='array', categoryarray=bins)
         )
         return fig
     except Exception as e:
@@ -901,13 +917,12 @@ def main():
                 temp_sample_type = None
                 avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
             
-            # Cell type selection - default to first 3
-            default_cts = avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts
-            sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=default_cts)
+            # Cell type selection - NO defaults, user must select
+            sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=[], key=f"temp_cts_{viz_type}_{temp_species}_{temp_sample_type}")
             
-            # Handle empty selection
+            # Handle empty selection - show message but don't crash
             if not sel_temp_cts:
-                st.info("Select at least one cell type to view the plot")
+                st.info("☝️ Select at least one cell type above to view the plot")
             else:
                 # Create plots based on view type
                 if viz_type == "Trajectory":

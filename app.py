@@ -666,28 +666,36 @@ def main():
         st.header("🧬 Step 1: Select Genes")
         st.markdown('<div class="gene-box"><b>Start here!</b> Enter genes, then explore tabs.</div>', unsafe_allow_html=True)
         
+        # Initialize session state for genes if not exists
+        if 'current_genes' not in st.session_state:
+            st.session_state.current_genes = ""
+        
         gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"], key='preset')
         
-        # Build preset gene list
-        preset_genes = ""
-        if gene_preset == "SFARI Score 1":
-            preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
-        elif gene_preset == "SFARI Score 2":
-            preset_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
-        elif gene_preset == "SFARI Syndromic":
-            if 'syndromic' in risk_genes.columns:
-                preset_genes = ", ".join(risk_genes[risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist())
-        elif gene_preset == "Top Variable":
-            preset_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
+        # Load preset button
+        if st.button("📥 Load Selected Set", use_container_width=True):
+            if gene_preset == "SFARI Score 1":
+                st.session_state.current_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
+            elif gene_preset == "SFARI Score 2":
+                st.session_state.current_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
+            elif gene_preset == "SFARI Syndromic":
+                if 'syndromic' in risk_genes.columns:
+                    st.session_state.current_genes = ", ".join(risk_genes[risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist())
+            elif gene_preset == "Top Variable":
+                st.session_state.current_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
+            st.rerun()
         
         # Single scrollable text area for all gene input
         gene_input = st.text_area(
             "Enter genes (comma or space separated)", 
-            value=preset_genes,
+            value=st.session_state.current_genes,
             height=150,
-            placeholder="SHANK3, MECP2, CHD8, SCN2A\nor paste a list here",
-            key='gene_input'
+            placeholder="SHANK3, MECP2, CHD8, SCN2A\nor paste a list here"
         )
+        
+        # Update session state when user types
+        if gene_input != st.session_state.current_genes:
+            st.session_state.current_genes = gene_input
         
         # Add submit button for mobile
         st.button("🔍 Search Genes", type="primary", use_container_width=True)
@@ -714,7 +722,7 @@ def main():
                 with st.expander(f"⚠️ {len(not_found_genes)} genes not in database"):
                     st.caption(", ".join(not_found_genes))
         else:
-            st.info("Enter gene names above")
+            st.info("Enter gene names above or load a preset")
         
         st.divider()
         st.subheader("⚙️ Display Options")
@@ -893,13 +901,28 @@ def main():
                     temp_sample_type = None
                     avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
                 
-                # Limit default selection to avoid crashes
-                default_cts = avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts
-                sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=default_cts, key='temp_cts')
+                # Cell type selection with max limit
+                MAX_CELLTYPES = 6
+                st.caption(f"Select up to {MAX_CELLTYPES} cell types")
                 
-                # Warning if too many cell types selected
-                if len(sel_temp_cts) > 8:
-                    st.warning(f"⚠️ {len(sel_temp_cts)} cell types selected. Consider selecting fewer for better performance.")
+                # Use session state to track selections and prevent rapid clicks
+                ct_key = f'temp_cts_{viz_type}'
+                if ct_key not in st.session_state:
+                    st.session_state[ct_key] = avail_temp_cts[:3] if len(avail_temp_cts) > 3 else avail_temp_cts
+                
+                # Filter out any invalid selections (in case species changed)
+                valid_selections = [ct for ct in st.session_state[ct_key] if ct in avail_temp_cts]
+                
+                sel_temp_cts = st.multiselect(
+                    "Cell Types", 
+                    avail_temp_cts, 
+                    default=valid_selections[:MAX_CELLTYPES],
+                    key=f'temp_cts_widget_{viz_type}',
+                    max_selections=MAX_CELLTYPES
+                )
+                
+                # Update session state
+                st.session_state[ct_key] = sel_temp_cts
                 
                 if viz_type == "Trajectory":
                     fig = create_temporal_trajectory(temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts or None, value_metric)

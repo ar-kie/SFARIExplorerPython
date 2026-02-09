@@ -679,14 +679,15 @@ def main():
         else:
             default_genes = ""
         
-        # Text area - use key based on preset to force refresh
-        gene_input = st.text_area(
-            "Enter genes (comma or space separated)", 
-            value=default_genes,
-            height=120,
-            placeholder="SHANK3, MECP2, CHD8, SCN2A",
-            key=f"genes_{gene_preset}"  # Key changes with preset, forcing refresh
-        )
+        # Use a form so Enter key or button submits on mobile
+        with st.form(key="gene_form"):
+            gene_input = st.text_area(
+                "Enter genes (comma or space separated)", 
+                value=default_genes,
+                height=120,
+                placeholder="SHANK3, MECP2, CHD8, SCN2A"
+            )
+            submitted = st.form_submit_button("🔍 Search Genes", use_container_width=True, type="primary")
         
         input_genes = parse_genes(gene_input)
         
@@ -709,7 +710,7 @@ def main():
             if not_found_genes:
                 st.caption(f"⚠️ Not found: {', '.join(not_found_genes[:5])}{'...' if len(not_found_genes) > 5 else ''}")
         else:
-            st.info("Select a preset or enter genes")
+            st.info("Select a preset or enter genes, then tap Search")
         
         st.divider()
         st.subheader("⚙️ Display Options")

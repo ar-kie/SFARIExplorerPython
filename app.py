@@ -1,6 +1,6 @@
 """
-SFARI Gene Expression Explorer v3
-Lean, fast, robust version.
+SFARI Gene Expression Explorer v4
+Robust version: Genes first, per-tab filters.
 """
 
 import streamlit as st
@@ -21,17 +21,17 @@ import re
 
 st.set_page_config(page_title="SFARI Gene Explorer", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
 
-# Minimal CSS
 st.markdown("""
 <style>
     .main .block-container { padding-top: 1rem; }
     h1 { color: #1f4e79; }
     div[data-testid="stMetricValue"] { font-size: 1.5rem; }
+    .gene-box { background: #f0f8ff; padding: 1rem; border-radius: 8px; border-left: 4px solid #1f4e79; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# Color Palettes
+# Color Palettes & Constants
 # =============================================================================
 
 SPECIES_COLORS = {'Human': '#e41a1c', 'Mouse': '#377eb8', 'Zebrafish': '#4daf4a', 'Drosophila': '#984ea3'}
@@ -47,13 +47,12 @@ CELLTYPE_COLORS = {
 
 DATASET_COLORS = {
     'He (2024)': '#e41a1c', 'Bhaduri (2021)': '#377eb8', 'Braun (2023)': '#4daf4a',
-    'Velmeshev (2023)': '#984ea3', 'Velmeshev (2019)': '#ff7f00', 'Zhu (2023)': '#ffff33',
+    'Velmeshev (2023)': '#984ea3', 'Velmeshev (2019)': '#ff7f00', 'Zhu (2023)': '#c9b400',
     'Wang (2025)': '#a65628', 'Wang (2022)': '#f781bf', 'La Manno (2021)': '#66c2a5',
     'Jin (2025)': '#fc8d62', 'Sziraki (2023)': '#8da0cb', 'Raj (2020)': '#e78ac3',
     'Davie (2018)': '#a6d854',
 }
 
-# Time bin ordering - CRITICAL for proper sorting
 TIME_BIN_ORDER = {
     'Early fetal (GW<10)': 1, 'Mid fetal (GW10-20)': 2, 'Late fetal (GW20-40)': 3,
     'Infant (0-2y)': 4, 'Child (2-12y)': 5, 'Adolescent (12-18y)': 6, 'Adult (18+y)': 7,
@@ -68,7 +67,6 @@ SAMPLE_TYPE_DISPLAY = {'in_vivo': 'Brain (ex-vivo)', 'organoid': 'Organoid (in-v
 GENE_SYMBOLS = ['circle', 'square', 'diamond', 'cross', 'x', 'triangle-up', 'triangle-down', 'star']
 
 def sort_time_bins(bins):
-    """Sort time bins in developmental order."""
     return sorted([b for b in bins if b], key=lambda x: TIME_BIN_ORDER.get(x, 99))
 
 def get_color_palette(values, palette_type='auto'):
@@ -80,12 +78,11 @@ def get_color_palette(values, palette_type='auto'):
     return {v: preset[i % len(preset)] for i, v in enumerate(values)}
 
 # =============================================================================
-# Data Loading - Cached for speed
+# Data Loading
 # =============================================================================
 
 @st.cache_data(ttl=3600)
 def load_data(data_dir="data"):
-    """Load all data with caching."""
     data = {}
     try:
         data['expression'] = pd.read_parquet(f"{data_dir}/expression_summaries.parquet")
@@ -95,10 +92,9 @@ def load_data(data_dir="data"):
         if 'gene-symbol' in data['risk_genes'].columns:
             data['risk_genes'] = data['risk_genes'].rename(columns={'gene-symbol': 'gene_symbol', 'gene-score': 'gene_score'})
     except Exception as e:
-        st.error(f"Error loading core data: {e}")
+        st.error(f"Error loading data: {e}")
         return None
     
-    # Optional files
     for key, fn in [('umap', 'umap_subsample.parquet'), ('vp_summary', 'variance_partition_summary.parquet'),
                     ('dataset_info', 'dataset_info.parquet'), ('batch_correction', 'batch_correction_info.parquet'),
                     ('summary_stats', 'summary_statistics.parquet'), ('temporal', 'temporal_expression.parquet'),
@@ -108,41 +104,47 @@ def load_data(data_dir="data"):
     return data
 
 def get_unique(df, col):
-    """Get unique sorted values safely."""
     if df is None or df.empty or col not in df.columns: return []
     return sorted(df[col].dropna().unique().tolist())
 
 def parse_genes(text):
-    """Parse gene input."""
     if not text or not text.strip(): return []
     return [g.strip().upper() for g in re.split(r'[,\s;]+', text.strip()) if g.strip()]
 
-def filter_data(df, species=None, datasets=None, cell_types=None, genes=None):
-    """Filter expression data. Returns empty DataFrame on any error."""
-    if df is None or df.empty: return pd.DataFrame()
+def filter_by_genes(df, genes):
+    """Filter dataframe by genes only. Safe, returns empty on error."""
+    if df is None or df.empty or not genes:
+        return pd.DataFrame()
+    try:
+        mask = (df['gene_human'].fillna('').str.upper().isin(genes) | 
+               df['gene_native'].fillna('').str.upper().isin(genes))
+        return df[mask].copy()
+    except:
+        return pd.DataFrame()
+
+def filter_df(df, species=None, datasets=None, cell_types=None):
+    """Apply additional filters. Safe, returns input on error."""
+    if df is None or df.empty:
+        return df
     try:
         result = df.copy()
         if species: result = result[result['species'].isin(species)]
         if datasets: result = result[result['tissue'].isin(datasets)]
         if cell_types: result = result[result['cell_type'].isin(cell_types)]
-        if genes:
-            mask = (result['gene_human'].fillna('').str.upper().isin(genes) | 
-                   result['gene_native'].fillna('').str.upper().isin(genes))
-            result = result[mask]
         return result
     except:
-        return pd.DataFrame()
+        return df
 
 # =============================================================================
 # Visualization Functions
 # =============================================================================
 
 def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, annotation_col=None, 
-                   cluster_rows=True, cluster_cols=True, legend_position='left'):
-    """Create heatmap with optional splitting and annotation."""
+                   cluster_rows=True, cluster_cols=True):
+    """Create heatmap. Expects pre-filtered data with genes."""
     if df.empty:
         fig = go.Figure()
-        fig.add_annotation(text="No data - enter genes first", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=16))
+        fig.add_annotation(text="No data to display", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=16))
         return fig
     
     df = df.copy()
@@ -155,23 +157,19 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         fig.add_annotation(text="No data to display", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
-    # Scale rows
     if scale_rows and pivot.shape[0] > 0:
         means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
         pivot = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
     
-    # Build column metadata
     col_meta = pd.DataFrame([{'col_key': c, 'species': c.split('|')[0], 'dataset': c.split('|')[1], 
                               'cell_type': c.split('|')[2]} for c in pivot.columns]).set_index('col_key')
     
-    # Cluster rows
     if cluster_rows and pivot.shape[0] > 1:
         try:
             link = linkage(pdist(pivot.fillna(0).values), method='average')
             pivot = pivot.iloc[leaves_list(link)]
         except: pass
     
-    # Handle splits
     splits = [None]
     if split_by and split_by in col_meta.columns:
         splits = [s for s in col_meta[split_by].unique() if pd.notna(s)]
@@ -185,8 +183,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         if cluster_cols and sub.shape[1] > 1:
             try:
                 link = linkage(pdist(sub.fillna(0).values.T), method='average')
-                order = leaves_list(link)
-                sub, sub_meta = sub.iloc[:, order], sub_meta.iloc[order]
+                sub, sub_meta = sub.iloc[:, leaves_list(link)], sub_meta.iloc[leaves_list(link)]
             except: pass
         matrices.append(sub)
         metas.append(sub_meta)
@@ -198,8 +195,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     
     n_splits = len(matrices)
     widths = [m.shape[1] for m in matrices]
-    total = sum(widths)
-    col_widths = [w/total for w in widths]
+    col_widths = [w/sum(widths) for w in widths]
     
     has_anno = annotation_col and annotation_col in col_meta.columns
     fig = make_subplots(rows=2 if has_anno else 1, cols=n_splits, column_widths=col_widths,
@@ -208,8 +204,8 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
                        subplot_titles=[str(s) for s in splits[:n_splits]] if n_splits > 1 else None)
     
     if has_anno:
-        anno_colors = get_color_palette(col_meta[annotation_col].unique().tolist(), 
-                      'species' if annotation_col == 'species' else 'cell_type' if annotation_col == 'cell_type' else 'dataset')
+        ptype = 'species' if annotation_col == 'species' else 'cell_type' if annotation_col == 'cell_type' else 'dataset'
+        anno_colors = get_color_palette(col_meta[annotation_col].unique().tolist(), ptype)
     
     cbar_added = False
     for idx, (mat, meta) in enumerate(zip(matrices, metas)):
@@ -231,10 +227,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         cbar_added = True
     
     height = max(400, 60 + len(pivot) * 14)
-    l_margin = 200 if legend_position == 'left' else 120
-    r_margin = 200 if legend_position == 'right' else 80
-    
-    fig.update_layout(height=height, margin=dict(l=l_margin, r=r_margin, t=80, b=100), showlegend=False)
+    fig.update_layout(height=height, margin=dict(l=200, r=80, t=80, b=100), showlegend=False)
     
     for i in range(1, n_splits + 1):
         hm_row = 2 if has_anno else 1
@@ -244,27 +237,23 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         fig.update_xaxes(tickangle=45, tickfont=dict(size=8), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=dict(size=9), row=hm_row, col=i)
     
-    # Add legend
     if has_anno:
         for v, c in anno_colors.items():
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=10, color=c), name=str(v), showlegend=True))
-        x_pos = -0.15 if legend_position == 'left' else 1.02
-        fig.update_layout(legend=dict(orientation='v', y=0.5, x=x_pos, xanchor='right' if legend_position == 'left' else 'left',
-                                     title=dict(text=annotation_col.replace('_',' ').title())), showlegend=True)
+        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title())), showlegend=True)
     
     return fig
 
-def create_dotplot(df, genes, group_by='cell_type'):
-    """Create dot plot."""
+def create_dotplot(df, group_by='cell_type'):
+    """Create dot plot. Expects pre-filtered data with genes."""
     if df.empty:
         fig = go.Figure()
-        fig.add_annotation(text="No data - enter genes first", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="No data to display", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     df = df.copy()
     df['gene'] = df['gene_human'].fillna(df['gene_native'])
     
-    # Rename for display
     display_col = 'Dataset' if group_by == 'tissue' else group_by.replace('_', ' ').title()
     if group_by == 'tissue':
         df['Dataset'] = df['tissue']
@@ -273,20 +262,21 @@ def create_dotplot(df, genes, group_by='cell_type'):
     agg = df.groupby(['gene', group_by]).agg({'pct_expressing': 'mean', 'mean_expr': 'mean'}).reset_index()
     agg['size'] = agg['pct_expressing'] * 25 + 5
     
+    n_genes = df['gene'].nunique()
     fig = px.scatter(agg, x=group_by, y='gene', size='size', color='mean_expr',
                     color_continuous_scale='Viridis', labels={'mean_expr': 'Mean Expr', 'gene': 'Gene'})
-    fig.update_layout(height=max(350, 40 + len(genes) * 22), xaxis_tickangle=45, yaxis=dict(autorange='reversed'))
+    fig.update_layout(height=max(350, 40 + n_genes * 22), xaxis_tickangle=45, yaxis=dict(autorange='reversed'))
     return fig
 
 # =============================================================================
-# Temporal Visualization Functions - FIXED
+# Temporal Functions
 # =============================================================================
 
 def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_types, value_col='mean_expr'):
     """Trajectory plot: colors = cell types, symbols = genes."""
     if temporal_df is None or temporal_df.empty or not genes:
         fig = go.Figure()
-        fig.add_annotation(text="Enter genes to visualize", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="No data available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     try:
@@ -294,7 +284,6 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         if 'sample_type' in df.columns and sample_type:
             df = df[df['sample_type'] == sample_type]
         
-        # Filter genes
         df = df[df['gene_human'].fillna('').str.upper().isin(genes)]
         if cell_types:
             df = df[df['cell_type'].isin(cell_types)]
@@ -304,7 +293,6 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
             fig.add_annotation(text=f"No data for selected genes in {species}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
-        # Get and sort time bins
         bins = sort_time_bins(df['time_bin'].dropna().unique().tolist())
         if not bins:
             fig = go.Figure()
@@ -322,9 +310,7 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
                 g_data = ct_data[ct_data['gene_human'] == gene]
                 if g_data.empty: continue
                 
-                # Aggregate by time bin
                 agg = g_data.groupby('time_bin')[value_col].mean().reset_index()
-                # Sort by time bin order
                 agg['order'] = agg['time_bin'].map(lambda x: TIME_BIN_ORDER.get(x, 99))
                 agg = agg.sort_values('order')
                 
@@ -339,7 +325,6 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
                     hovertemplate=f"Gene: {gene}<br>Cell: {ct}<br>Time: %{{x}}<br>Expr: %{{y:.2f}}<extra></extra>"
                 ))
         
-        # Gene symbol legend
         if len(gene_list) > 1:
             sym_text = "Symbols: " + ", ".join([f"{g}({gene_syms[g]})" for g in gene_list[:5]])
             fig.add_annotation(text=sym_text, x=0.5, y=-0.18, xref="paper", yref="paper", showarrow=False, font=dict(size=9))
@@ -358,10 +343,10 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         return fig
 
 def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type, value_col='mean_expr'):
-    """Temporal heatmap: genes x time bins."""
+    """Temporal heatmap."""
     if temporal_df is None or temporal_df.empty or not genes:
         fig = go.Figure()
-        fig.add_annotation(text="Enter genes to visualize", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="No data available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     try:
@@ -386,11 +371,9 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
             fig.add_annotation(text="No data to display", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
-        # Sort columns by time order
         sorted_cols = sort_time_bins(pivot.columns.tolist())
         pivot = pivot[[c for c in sorted_cols if c in pivot.columns]]
         
-        # Z-score
         means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
         pivot = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
         
@@ -413,10 +396,10 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
         return fig
 
 def create_multi_species_comparison(temporal_df, gene, cell_types, value_col='mean_expr'):
-    """Multi-species temporal comparison for one gene."""
+    """Multi-species temporal comparison."""
     if temporal_df is None or temporal_df.empty or not gene:
         fig = go.Figure()
-        fig.add_annotation(text="Enter a gene to compare", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="Select a gene", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     try:
@@ -429,7 +412,6 @@ def create_multi_species_comparison(temporal_df, gene, cell_types, value_col='me
             fig.add_annotation(text=f"No data for {gene}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
-        # Create plot group (species + sample_type for Human)
         if 'sample_type' in df.columns:
             df['group'] = df.apply(lambda x: f"Human ({SAMPLE_TYPE_DISPLAY.get(x['sample_type'], x['sample_type']).split('(')[0].strip()})" 
                                    if x['species'] == 'Human' else x['species'], axis=1)
@@ -445,7 +427,6 @@ def create_multi_species_comparison(temporal_df, gene, cell_types, value_col='me
         
         for i, grp in enumerate(groups):
             g_data = df[df['group'] == grp]
-            bins = sort_time_bins(g_data['time_bin'].dropna().unique().tolist())
             
             for ct in g_data['cell_type'].unique():
                 ct_data = g_data[g_data['cell_type'] == ct]
@@ -496,7 +477,6 @@ def create_timepoint_snapshot(temporal_df, gene, time_bin, cell_types, value_col
             fig.add_annotation(text=f"No data for {gene} at {time_bin}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
-        # Group by species (with sample_type distinction for Human)
         if 'sample_type' in df.columns:
             df['group'] = df.apply(lambda x: f"Human ({SAMPLE_TYPE_DISPLAY.get(x['sample_type'], x['sample_type']).split('(')[0].strip()})" 
                                    if x['species'] == 'Human' else x['species'], axis=1)
@@ -516,14 +496,13 @@ def create_timepoint_snapshot(temporal_df, gene, time_bin, cell_types, value_col
         return fig
 
 # =============================================================================
-# Cross-Species Functions
+# Cross-Species & Overview Functions
 # =============================================================================
 
 def create_species_bar(ortholog_df, genes, cell_types):
-    """Cross-species expression bar chart."""
     if ortholog_df is None or ortholog_df.empty or not genes:
         fig = go.Figure()
-        fig.add_annotation(text="Enter genes to compare", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="No data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     try:
@@ -547,7 +526,6 @@ def create_species_bar(ortholog_df, genes, cell_types):
         return fig
 
 def create_correlation_heatmap(species_comparison_df, genes):
-    """Species correlation heatmap."""
     if species_comparison_df is None or species_comparison_df.empty:
         fig = go.Figure()
         fig.add_annotation(text="Species comparison data not available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
@@ -555,18 +533,16 @@ def create_correlation_heatmap(species_comparison_df, genes):
     
     if not genes:
         fig = go.Figure()
-        fig.add_annotation(text="Enter genes to see correlations", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="Select genes", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     try:
-        df = species_comparison_df.copy()
-        df = df[df['gene_human'].fillna('').str.upper().isin(genes)]
+        df = species_comparison_df[species_comparison_df['gene_human'].fillna('').str.upper().isin(genes)].copy()
         
         if df.empty:
             avail = species_comparison_df['gene_human'].unique()[:10].tolist()
             fig = go.Figure()
-            fig.add_annotation(text=f"No data for selected genes.\nTry: {', '.join(avail)}", 
-                             x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"No data. Try: {', '.join(avail)}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
         df['pair'] = df['species_1'] + ' vs ' + df['species_2']
@@ -583,10 +559,9 @@ def create_correlation_heatmap(species_comparison_df, genes):
         return fig
 
 def create_ortholog_scatter(ortholog_df, gene, sp_x, sp_y):
-    """Ortholog expression scatter."""
     if ortholog_df is None or ortholog_df.empty or not gene:
         fig = go.Figure()
-        fig.add_annotation(text="Enter a gene", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="Select a gene", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     try:
@@ -598,7 +573,7 @@ def create_ortholog_scatter(ortholog_df, gene, sp_x, sp_y):
         
         if merged.empty:
             fig = go.Figure()
-            fig.add_annotation(text=f"No common cell types for {gene}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"No common cell types", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
         corr = spearmanr(merged['x'], merged['y'])[0] if len(merged) >= 3 else float('nan')
@@ -622,14 +597,10 @@ def create_ortholog_scatter(ortholog_df, gene, sp_x, sp_y):
         fig.add_annotation(text=f"Error: {str(e)}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
 
-# =============================================================================
-# Overview Functions
-# =============================================================================
-
 def create_variance_barplot(vp_summary):
     if vp_summary is None or vp_summary.empty:
         fig = go.Figure()
-        fig.add_annotation(text="No variance data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="No data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
     colors = {'Before Correction': '#ff7f0e', 'After Correction': '#1f77b4'}
@@ -664,7 +635,7 @@ def create_variance_change(vp_summary):
     return fig
 
 # =============================================================================
-# Main App
+# Main App - GENES FIRST, PER-TAB FILTERS
 # =============================================================================
 
 def main():
@@ -679,11 +650,11 @@ def main():
     expr_df, risk_genes = data['expression'], data['risk_genes']
     
     # ==========================================================================
-    # Sidebar - GENES FIRST for stability
+    # Sidebar - ONLY GENE SELECTION
     # ==========================================================================
     with st.sidebar:
-        st.header("🧬 Gene Selection")
-        st.caption("⚠️ Enter genes first for best results")
+        st.header("🧬 Step 1: Select Genes")
+        st.markdown('<div class="gene-box"><b>Start here!</b> Enter genes first, then explore tabs.</div>', unsafe_allow_html=True)
         
         gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "Top Variable"], key='preset')
         preset_genes = ""
@@ -694,44 +665,36 @@ def main():
         elif gene_preset == "Top Variable":
             preset_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(20).index.tolist())
         
-        gene_input = st.text_area("Genes (comma separated)", value=preset_genes, height=80, placeholder="SHANK3, MECP2, CHD8")
+        gene_input = st.text_area("Enter genes (comma separated)", value=preset_genes, height=100, 
+                                  placeholder="e.g., SHANK3, MECP2, CHD8, SCN2A")
         selected_genes = parse_genes(gene_input)
         
-        if selected_genes:
-            st.success(f"✓ {len(selected_genes)} genes")
+        if len(selected_genes) >= 2:
+            st.success(f"✓ {len(selected_genes)} genes selected")
+        elif len(selected_genes) == 1:
+            st.warning("Add at least 1 more gene for heatmaps")
         else:
-            st.warning("Enter genes above")
+            st.error("⚠️ Enter genes above to begin")
         
         st.divider()
-        st.header("🔍 Filters")
-        
-        all_species = get_unique(expr_df, 'species')
-        selected_species = st.multiselect("Species", all_species, default=all_species[:1] if all_species else [])
-        
-        avail_datasets = get_unique(expr_df[expr_df['species'].isin(selected_species)] if selected_species else expr_df, 'tissue')
-        selected_datasets = st.multiselect("Dataset", avail_datasets, default=[])
-        
-        subset = expr_df.copy()
-        if selected_species: subset = subset[subset['species'].isin(selected_species)]
-        if selected_datasets: subset = subset[subset['tissue'].isin(selected_datasets)]
-        avail_cts = get_unique(subset, 'cell_type')
-        selected_celltypes = st.multiselect("Cell Types", avail_cts, default=[])
-        
-        st.divider()
+        st.subheader("⚙️ Display Options")
         value_metric = st.radio("Value", ['mean_expr', 'pct_expressing'], 
-                               format_func=lambda x: "Mean Expr" if x == 'mean_expr' else "% Expressing", horizontal=True)
+                               format_func=lambda x: "Mean Expression" if x == 'mean_expr' else "% Expressing", horizontal=True)
         scale_rows = st.checkbox("Z-score scaling", value=True)
+        
+        st.divider()
+        st.caption("📌 Filters are in each tab")
     
-    # Filter data
-    filtered_df = filter_data(expr_df, selected_species or None, selected_datasets or None, 
-                              selected_celltypes or None, selected_genes or None)
+    # Pre-filter expression data by genes (safe operation)
+    gene_filtered_df = filter_by_genes(expr_df, selected_genes)
     
-    # Metrics
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Genes", filtered_df['gene_human'].nunique() if not filtered_df.empty else 0)
-    c2.metric("Species", filtered_df['species'].nunique() if not filtered_df.empty else 0)
-    c3.metric("Datasets", filtered_df['tissue'].nunique() if not filtered_df.empty else 0)
-    c4.metric("Cell Types", filtered_df['cell_type'].nunique() if not filtered_df.empty else 0)
+    # Quick stats
+    if not gene_filtered_df.empty:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Genes", gene_filtered_df['gene_human'].nunique())
+        c2.metric("Species", gene_filtered_df['species'].nunique())
+        c3.metric("Datasets", gene_filtered_df['tissue'].nunique())
+        c4.metric("Cell Types", gene_filtered_df['cell_type'].nunique())
     
     # ==========================================================================
     # Tabs
@@ -739,7 +702,7 @@ def main():
     tabs = st.tabs(["📊 Overview", "🗺️ UMAP", "🔥 Heatmap", "🔵 Dot Plot", "📈 Temporal", "🔬 Cross-Species", "📋 Data", "📚 About"])
     
     # --------------------------------------------------------------------------
-    # Overview
+    # Overview Tab
     # --------------------------------------------------------------------------
     with tabs[0]:
         st.header("Data Overview")
@@ -763,16 +726,16 @@ def main():
             c2.plotly_chart(create_variance_change(data['vp_summary']), use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # UMAP
+    # UMAP Tab
     # --------------------------------------------------------------------------
     with tabs[1]:
-        st.header("UMAP")
+        st.header("UMAP Visualization")
         if data['umap'] is not None:
             umap_df = data['umap']
             color_cols = [c for c in umap_df.columns if c not in ['umap_1', 'umap_2', 'cell_id']]
             c1, c2 = st.columns([1, 4])
             with c1:
-                color_by = st.selectbox("Color", color_cols, index=color_cols.index('predicted_labels') if 'predicted_labels' in color_cols else 0)
+                color_by = st.selectbox("Color by", color_cols, index=color_cols.index('predicted_labels') if 'predicted_labels' in color_cols else 0)
                 pt_size = st.slider("Size", 1, 8, 2)
             with c2:
                 cmap = SPECIES_COLORS if color_by == 'organism' else CELLTYPE_COLORS if color_by in ['predicted_labels','cell_type'] else DATASET_COLORS if color_by == 'dataset' else get_color_palette(umap_df[color_by].unique().tolist())
@@ -784,35 +747,76 @@ def main():
             st.info("UMAP data not available")
     
     # --------------------------------------------------------------------------
-    # Heatmap
+    # Heatmap Tab - WITH ITS OWN FILTERS
     # --------------------------------------------------------------------------
     with tabs[2]:
-        if not selected_genes:
-            st.info("⬅️ Enter genes in sidebar first")
+        if len(selected_genes) < 2:
+            st.warning("⬅️ Enter at least 2 genes in the sidebar to create a heatmap")
         else:
-            c1, c2, c3, c4 = st.columns(4)
-            split_by = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[c1.selectbox("Split", ["None", "Species", "Dataset", "Cell Type"])]
-            anno_col = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[c2.selectbox("Annotation", ["None", "Species", "Dataset", "Cell Type"])]
-            cluster_rows = c3.checkbox("Cluster rows", value=False)
-            cluster_cols = c4.checkbox("Cluster cols", value=False)
+            st.subheader("Filters")
+            hm_c1, hm_c2, hm_c3 = st.columns(3)
             
-            fig = create_heatmap(filtered_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols, legend_position='left')
+            with hm_c1:
+                avail_species = get_unique(gene_filtered_df, 'species')
+                hm_species = st.multiselect("Species", avail_species, default=avail_species, key='hm_sp')
+            
+            with hm_c2:
+                hm_df_sp = filter_df(gene_filtered_df, species=hm_species or None)
+                avail_datasets = get_unique(hm_df_sp, 'tissue')
+                hm_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='hm_ds')
+            
+            with hm_c3:
+                hm_df_ds = filter_df(hm_df_sp, datasets=hm_datasets or None)
+                avail_cts = get_unique(hm_df_ds, 'cell_type')
+                hm_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='hm_ct')
+            
+            # Apply filters
+            hm_df = filter_df(gene_filtered_df, species=hm_species or None, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
+            
+            st.subheader("Display Options")
+            hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
+            split_by = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o1.selectbox("Split by", ["None", "Species", "Dataset", "Cell Type"])]
+            anno_col = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o2.selectbox("Annotation", ["None", "Species", "Dataset", "Cell Type"])]
+            cluster_rows = hm_o3.checkbox("Cluster rows", value=False)
+            cluster_cols = hm_o4.checkbox("Cluster cols", value=False)
+            
+            fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
             st.plotly_chart(fig, use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # Dot Plot
+    # Dot Plot Tab - WITH ITS OWN FILTERS
     # --------------------------------------------------------------------------
     with tabs[3]:
         if not selected_genes:
-            st.info("⬅️ Enter genes in sidebar first")
+            st.warning("⬅️ Enter genes in the sidebar first")
         else:
+            st.subheader("Filters")
+            dp_c1, dp_c2, dp_c3 = st.columns(3)
+            
+            with dp_c1:
+                avail_species = get_unique(gene_filtered_df, 'species')
+                dp_species = st.multiselect("Species", avail_species, default=avail_species, key='dp_sp')
+            
+            with dp_c2:
+                dp_df_sp = filter_df(gene_filtered_df, species=dp_species or None)
+                avail_datasets = get_unique(dp_df_sp, 'tissue')
+                dp_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='dp_ds')
+            
+            with dp_c3:
+                dp_df_ds = filter_df(dp_df_sp, datasets=dp_datasets or None)
+                avail_cts = get_unique(dp_df_ds, 'cell_type')
+                dp_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='dp_ct')
+            
+            dp_df = filter_df(gene_filtered_df, species=dp_species or None, datasets=dp_datasets or None, cell_types=dp_celltypes or None)
+            
             group_by = st.selectbox("Group by", ['cell_type', 'tissue', 'species'], 
                                    format_func=lambda x: 'Dataset' if x == 'tissue' else x.replace('_',' ').title())
-            fig = create_dotplot(filtered_df, selected_genes, group_by)
+            
+            fig = create_dotplot(dp_df, group_by)
             st.plotly_chart(fig, use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # Temporal
+    # Temporal Tab - WITH ITS OWN FILTERS
     # --------------------------------------------------------------------------
     with tabs[4]:
         st.header("Temporal Expression Dynamics")
@@ -820,7 +824,7 @@ def main():
         if data['temporal'] is None or data['temporal'].empty:
             st.warning("Temporal data not available. Generate temporal_expression.parquet.")
         elif not selected_genes:
-            st.info("⬅️ Enter genes in sidebar first")
+            st.warning("⬅️ Enter genes in the sidebar first")
         else:
             temporal_df = data['temporal']
             
@@ -839,7 +843,6 @@ def main():
                             sel = st.selectbox("Sample Type", st_display, key='temp_st')
                             temp_sample_type = st_opts[st_display.index(sel)]
                 
-                # Get cell types for this species/sample_type
                 sp_df = temporal_df[temporal_df['species'] == temp_species]
                 if 'sample_type' in sp_df.columns:
                     sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
@@ -857,7 +860,7 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
             
             elif viz_type == "Heatmap":
-                hm_ct = st.selectbox("Cell Type", ['All'] + avail_temp_cts, key='temp_hm_ct')
+                hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct')
                 fig = create_temporal_heatmap(temporal_df, selected_genes, temp_species, temp_sample_type, 
                                              hm_ct if hm_ct != 'All' else None, value_metric)
                 st.plotly_chart(fig, use_container_width=True)
@@ -868,7 +871,6 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
             
             elif viz_type == "Timepoint Snapshot":
-                # Get available time bins
                 sp_df = temporal_df[temporal_df['species'] == temp_species]
                 if 'sample_type' in sp_df.columns:
                     sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
@@ -883,7 +885,7 @@ def main():
                     st.warning("No timepoints available for this species/sample type")
     
     # --------------------------------------------------------------------------
-    # Cross-Species
+    # Cross-Species Tab - WITH ITS OWN FILTERS
     # --------------------------------------------------------------------------
     with tabs[5]:
         st.header("Cross-Species Comparison")
@@ -891,14 +893,18 @@ def main():
         if data['ortholog'] is None:
             st.warning("Ortholog data not available.")
         elif not selected_genes:
-            st.info("⬅️ Enter genes in sidebar first")
+            st.warning("⬅️ Enter genes in the sidebar first")
         else:
             ortholog_df = data['ortholog']
             
             sp_viz = st.selectbox("View", ["Bar Chart", "Correlation Heatmap", "Scatter Plot"], key='sp_viz')
             
+            # Cell type filter for this tab
+            avail_cts = get_unique(ortholog_df, 'cell_type')
+            sp_celltypes = st.multiselect("Cell Types (optional)", avail_cts, default=[], key='sp_ct')
+            
             if sp_viz == "Bar Chart":
-                fig = create_species_bar(ortholog_df, selected_genes, selected_celltypes or None)
+                fig = create_species_bar(ortholog_df, selected_genes, sp_celltypes or None)
                 st.plotly_chart(fig, use_container_width=True)
             
             elif sp_viz == "Correlation Heatmap":
@@ -919,27 +925,51 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
     
     # --------------------------------------------------------------------------
-    # Data Table
+    # Data Table Tab
     # --------------------------------------------------------------------------
     with tabs[6]:
-        if filtered_df.empty:
-            st.info("No data - enter genes first")
+        if not selected_genes:
+            st.warning("⬅️ Enter genes in the sidebar first")
+        elif gene_filtered_df.empty:
+            st.info("No data for selected genes")
         else:
-            df_disp = filtered_df.copy()
-            df_disp['gene'] = df_disp['gene_human'].fillna(df_disp['gene_native'])
-            df_disp = df_disp.rename(columns={'tissue': 'Dataset'})
+            st.subheader("Filters")
+            dt_c1, dt_c2, dt_c3 = st.columns(3)
             
-            if 'gene_symbol' in risk_genes.columns:
-                df_disp['SFARI'] = df_disp['gene'].map(risk_genes.set_index('gene_symbol')['gene_score'].to_dict())
+            with dt_c1:
+                avail_species = get_unique(gene_filtered_df, 'species')
+                dt_species = st.multiselect("Species", avail_species, default=avail_species, key='dt_sp')
             
-            default_cols = [c for c in ['gene', 'species', 'Dataset', 'cell_type', 'mean_expr', 'pct_expressing', 'n_cells'] if c in df_disp.columns]
-            cols = st.multiselect("Columns", df_disp.columns.tolist(), default=default_cols)
-            if cols:
-                st.dataframe(df_disp[cols].sort_values(['gene', 'species']), height=450, use_container_width=True)
-                st.download_button("Download CSV", df_disp[cols].to_csv(index=False), "data.csv", "text/csv")
+            with dt_c2:
+                dt_df_sp = filter_df(gene_filtered_df, species=dt_species or None)
+                avail_datasets = get_unique(dt_df_sp, 'tissue')
+                dt_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='dt_ds')
+            
+            with dt_c3:
+                dt_df_ds = filter_df(dt_df_sp, datasets=dt_datasets or None)
+                avail_cts = get_unique(dt_df_ds, 'cell_type')
+                dt_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='dt_ct')
+            
+            dt_df = filter_df(gene_filtered_df, species=dt_species or None, datasets=dt_datasets or None, cell_types=dt_celltypes or None)
+            
+            if not dt_df.empty:
+                dt_df = dt_df.copy()
+                dt_df['gene'] = dt_df['gene_human'].fillna(dt_df['gene_native'])
+                dt_df = dt_df.rename(columns={'tissue': 'Dataset'})
+                
+                if 'gene_symbol' in risk_genes.columns:
+                    dt_df['SFARI'] = dt_df['gene'].map(risk_genes.set_index('gene_symbol')['gene_score'].to_dict())
+                
+                default_cols = [c for c in ['gene', 'species', 'Dataset', 'cell_type', 'mean_expr', 'pct_expressing', 'n_cells'] if c in dt_df.columns]
+                cols = st.multiselect("Columns", dt_df.columns.tolist(), default=default_cols)
+                if cols:
+                    st.dataframe(dt_df[cols].sort_values(['gene', 'species']), height=450, use_container_width=True)
+                    st.download_button("Download CSV", dt_df[cols].to_csv(index=False), "data.csv", "text/csv")
+            else:
+                st.info("No data after filtering")
     
     # --------------------------------------------------------------------------
-    # About - FULL VERSION
+    # About Tab - FULL VERSION
     # --------------------------------------------------------------------------
     with tabs[7]:
         st.markdown("""
@@ -1060,7 +1090,7 @@ For questions, bug reports, or feature requests, please open an issue on
         """)
     
     st.divider()
-    st.caption("SFARI Gene Explorer v3 | Built with Streamlit & Plotly")
+    st.caption("SFARI Gene Explorer v4 | Built with Streamlit & Plotly")
 
 if __name__ == "__main__":
     main()

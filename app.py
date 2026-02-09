@@ -21,12 +21,25 @@ import re
 
 st.set_page_config(page_title="SFARI Gene Explorer", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
 
+# Plotly config for mobile-friendly controls
+PLOTLY_CONFIG = {
+    'displayModeBar': True,
+    'displaylogo': False,
+    'modeBarButtonsToAdd': ['zoom2d', 'pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d'],
+    'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+    'scrollZoom': True,
+    'responsive': True,
+}
+
 st.markdown("""
 <style>
     .main .block-container { padding-top: 1rem; }
     h1 { color: #1f4e79; }
     div[data-testid="stMetricValue"] { font-size: 1.5rem; }
     .gene-box { background: #f0f8ff; padding: 1rem; border-radius: 8px; border-left: 4px solid #1f4e79; margin: 0.5rem 0; }
+    /* Make plotly modebar always visible on mobile */
+    .modebar { display: flex !important; }
+    .modebar-group { display: flex !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -778,7 +791,7 @@ def main():
                 fig = px.scatter(umap_df, x='umap_1', y='umap_2', color=color_by, color_discrete_map=cmap)
                 fig.update_traces(marker=dict(size=pt_size, opacity=0.6))
                 fig.update_layout(height=550, legend=dict(font=dict(size=8)))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
         else:
             st.info("UMAP data not available")
     
@@ -817,7 +830,7 @@ def main():
             cluster_cols = hm_o4.checkbox("Cluster cols", value=False)
             
             fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Dot Plot Tab - WITH ITS OWN FILTERS
@@ -849,7 +862,7 @@ def main():
                                    format_func=lambda x: 'Dataset' if x == 'tissue' else x.replace('_',' ').title())
             
             fig = create_dotplot(dp_df, group_by)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Temporal Tab - WITH ITS OWN FILTERS
@@ -900,7 +913,7 @@ def main():
                 if viz_type == "Trajectory":
                     try:
                         fig = create_temporal_trajectory(temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                     except Exception as e:
                         st.error(f"Error creating trajectory: {str(e)}")
                 
@@ -909,7 +922,7 @@ def main():
                     try:
                         fig = create_temporal_heatmap(temporal_df, selected_genes, temp_species, temp_sample_type, 
                                                      hm_ct if hm_ct != 'All' else None, value_metric)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                     except Exception as e:
                         st.error(f"Error creating heatmap: {str(e)}")
                 
@@ -917,7 +930,7 @@ def main():
                     comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp')
                     try:
                         fig = create_multi_species_comparison(temporal_df, comp_gene, sel_temp_cts, value_metric)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                     except Exception as e:
                         st.error(f"Error creating comparison: {str(e)}")
                 
@@ -932,7 +945,7 @@ def main():
                         comp_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene')
                         try:
                             fig = create_timepoint_snapshot(temporal_df, comp_gene, sel_bin, sel_temp_cts, value_metric)
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                         except Exception as e:
                             st.error(f"Error creating snapshot: {str(e)}")
                     else:
@@ -959,11 +972,11 @@ def main():
             
             if sp_viz == "Bar Chart":
                 fig = create_species_bar(ortholog_df, selected_genes, sp_celltypes or None)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
             
             elif sp_viz == "Correlation Heatmap":
                 fig = create_correlation_heatmap(data['species_comparison'], selected_genes)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
             
             elif sp_viz == "Scatter Plot":
                 sc1, sc2, sc3 = st.columns(3)
@@ -976,7 +989,7 @@ def main():
                     other_sp = [s for s in avail_sp if s != sp_x]
                     sp_y = st.selectbox("Species Y", other_sp, index=0 if other_sp else 0, key='sp_y')
                 fig = create_ortholog_scatter(ortholog_df, scatter_gene, sp_x, sp_y)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Data Table Tab

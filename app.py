@@ -38,11 +38,12 @@ PLOTLY_CONFIG = {
     }
 }
 
-# Fixed font sizes that don't change on zoom
-PLOT_FONT = dict(family="Arial, sans-serif", size=12)
-PLOT_TITLE_FONT = dict(family="Arial, sans-serif", size=14)
-PLOT_AXIS_FONT = dict(family="Arial, sans-serif", size=11)
-PLOT_TICK_FONT = dict(family="Arial, sans-serif", size=10)
+# Fixed font sizes that don't change on zoom - INCREASED
+PLOT_FONT = dict(family="Arial, sans-serif", size=14)
+PLOT_TITLE_FONT = dict(family="Arial, sans-serif", size=18)
+PLOT_AXIS_FONT = dict(family="Arial, sans-serif", size=14)
+PLOT_TICK_FONT = dict(family="Arial, sans-serif", size=12)
+PLOT_LEGEND_FONT = dict(family="Arial, sans-serif", size=12)
 
 st.markdown("""
 <style>
@@ -63,12 +64,32 @@ st.markdown("""
 SPECIES_COLORS = {'Human': '#e41a1c', 'Mouse': '#377eb8', 'Zebrafish': '#4daf4a', 'Drosophila': '#984ea3'}
 
 CELLTYPE_COLORS = {
-    'Excitatory Neurons': '#e41a1c', 'Inhibitory Neurons': '#377eb8',
-    'Neural Progenitors & Stem Cells': '#4daf4a', 'Astrocytes': '#984ea3',
-    'Oligodendrocyte Lineage': '#ff7f00', 'Microglia & Macrophages': '#8B4513',
-    'Endothelial & Vascular Cells': '#a65628', 'Endothelial & Vascular': '#a65628',
-    'Other Glia & Support': '#f781bf', 'Neurons (unspecified)': '#999999',
-    'Fibroblast / Mesenchymal': '#66c2a5', 'Early Embryonic / Germ Layers': '#fc8d62'
+    # Neurons
+    'Excitatory Neurons': '#e41a1c',           # Red
+    'Inhibitory Neurons': '#377eb8',            # Blue
+    'Neurons (unspecified)': '#cab2d6',         # Light purple
+    'Neurons (General)': '#6a3d9a',             # Dark purple
+    'Dopaminergic & Monoaminergic': '#b15928',  # Brown-orange
+    
+    # Progenitors & Stem Cells
+    'Neural Progenitors & Stem Cells': '#4daf4a',  # Green
+    'Early Embryonic / Germ Layers': '#b2df8a',    # Light green
+    
+    # Glia
+    'Astrocytes': '#984ea3',                    # Purple
+    'Oligodendrocyte Lineage': '#ff7f00',       # Orange
+    'Microglia & Macrophages': '#8B4513',       # Brown
+    'Other Glia & Support': '#f781bf',          # Pink
+    'Glia (General)': '#fdbf6f',                # Light orange
+    
+    # Vascular & Support
+    'Endothelial & Vascular Cells': '#1f78b4',  # Dark blue
+    'Endothelial & Vascular': '#1f78b4',        # Dark blue
+    'Ependymal & Choroid Plexus': '#33a02c',    # Dark green
+    'Fibroblast / Mesenchymal': '#fb9a99',      # Light red/salmon
+    
+    # Other
+    'Other': '#a6cee3',                         # Light blue
 }
 
 DATASET_COLORS = {
@@ -100,16 +121,27 @@ TIME_BIN_ORDER = {
 SAMPLE_TYPE_DISPLAY = {'in_vivo': 'Brain (ex-vivo)', 'organoid': 'Organoid (in-vitro)'}
 GENE_SYMBOLS = ['circle', 'square', 'diamond', 'cross', 'x', 'triangle-up', 'triangle-down', 'star']
 
+# Extended color palette for fallback (20 distinct colors)
+EXTENDED_COLORS = [
+    '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', 
+    '#a65628', '#f781bf', '#1f78b4', '#b2df8a', '#33a02c',
+    '#fb9a99', '#fdbf6f', '#cab2d6', '#6a3d9a', '#b15928',
+    '#8dd3c7', '#bebada', '#fb8072', '#80b1d3', '#fdb462'
+]
+
 def sort_time_bins(bins):
     return sorted([b for b in bins if b], key=lambda x: TIME_BIN_ORDER.get(x, 99))
 
 def get_color_palette(values, palette_type='auto'):
     if not values: return {}
-    if palette_type == 'species': return {v: SPECIES_COLORS.get(v, '#999') for v in values}
-    if palette_type == 'cell_type': return {v: CELLTYPE_COLORS.get(v, '#999') for v in values}
-    if palette_type == 'dataset': return {v: DATASET_COLORS.get(v, '#999') for v in values}
-    preset = ['#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#8B4513','#a65628','#f781bf','#999999','#66c2a5','#fc8d62','#8da0cb']
-    return {v: preset[i % len(preset)] for i, v in enumerate(values)}
+    if palette_type == 'species': 
+        return {v: SPECIES_COLORS.get(v, EXTENDED_COLORS[hash(v) % len(EXTENDED_COLORS)]) for v in values}
+    if palette_type == 'cell_type': 
+        return {v: CELLTYPE_COLORS.get(v, EXTENDED_COLORS[hash(v) % len(EXTENDED_COLORS)]) for v in values}
+    if palette_type == 'dataset': 
+        return {v: DATASET_COLORS.get(v, EXTENDED_COLORS[hash(v) % len(EXTENDED_COLORS)]) for v in values}
+    # For unknown palette types, use extended colors
+    return {v: EXTENDED_COLORS[i % len(EXTENDED_COLORS)] for i, v in enumerate(values)}
 
 # =============================================================================
 # Data Loading
@@ -266,25 +298,25 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         hm_row = 2 if has_anno else 1
         fig.add_trace(go.Heatmap(z=mat.values, x=labels, y=mat.index.tolist(),
                      colorscale=colorscale, zmid=zmid if scale_rows else None, zmin=zmin, zmax=zmax, showscale=not cbar_added,
-                     colorbar=dict(title=cbar_title, thickness=12, len=0.6) if not cbar_added else None),
+                     colorbar=dict(title=cbar_title, thickness=12, len=0.6, tickfont=PLOT_TICK_FONT) if not cbar_added else None),
                      row=hm_row, col=col_idx)
         cbar_added = True
     
-    height = max(400, 60 + len(pivot) * 14)
-    fig.update_layout(height=height, margin=dict(l=200, r=80, t=80, b=100), showlegend=False)
+    height = max(400, 60 + len(pivot) * 16)
+    fig.update_layout(height=height, margin=dict(l=200, r=80, t=80, b=120), showlegend=False, font=PLOT_FONT)
     
     for i in range(1, n_splits + 1):
         hm_row = 2 if has_anno else 1
         if has_anno:
             fig.update_xaxes(showticklabels=False, row=1, col=i)
             fig.update_yaxes(showticklabels=False, row=1, col=i)
-        fig.update_xaxes(tickangle=45, tickfont=dict(size=8), row=hm_row, col=i)
-        fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=dict(size=9), row=hm_row, col=i)
+        fig.update_xaxes(tickangle=45, tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
+        fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:
         for v, c in anno_colors.items():
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=10, color=c), name=str(v), showlegend=True))
-        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title())), showlegend=True)
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=12, color=c), name=str(v), showlegend=True))
+        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True)
     
     return fig
 
@@ -309,7 +341,15 @@ def create_dotplot(df, group_by='cell_type'):
     n_genes = df['gene'].nunique()
     fig = px.scatter(agg, x=group_by, y='gene', size='size', color='mean_expr',
                     color_continuous_scale='Viridis', labels={'mean_expr': 'Mean Expr', 'gene': 'Gene'})
-    fig.update_layout(height=max(350, 40 + n_genes * 22), xaxis_tickangle=45, yaxis=dict(autorange='reversed'))
+    fig.update_layout(
+        height=max(350, 40 + n_genes * 24), 
+        xaxis_tickangle=45, 
+        yaxis=dict(autorange='reversed'),
+        font=PLOT_FONT,
+        xaxis=dict(tickfont=PLOT_TICK_FONT, title_font=PLOT_AXIS_FONT),
+        yaxis_tickfont=PLOT_TICK_FONT,
+        coloraxis_colorbar=dict(tickfont=PLOT_TICK_FONT)
+    )
     return fig
 
 # =============================================================================

@@ -278,11 +278,15 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     fig = make_subplots(rows=2 if has_anno else 1, cols=n_splits, column_widths=col_widths,
                        row_heights=[0.03, 0.97] if has_anno else [1.0],
                        horizontal_spacing=0.02, vertical_spacing=0.01,
-                       subplot_titles=[str(s) for s in splits[:n_splits]] if n_splits > 1 else None)
+                       subplot_titles=[str(s) for s in splits[:n_splits]] if n_splits > 1 else None,
+                       shared_xaxes=True)  # Share x-axes so zoom works together
     
     if has_anno:
         ptype = 'species' if annotation_col == 'species' else 'cell_type' if annotation_col == 'cell_type' else 'dataset'
         anno_colors = get_color_palette(col_meta[annotation_col].unique().tolist(), ptype)
+        # Create a mapping from category to integer for heatmap
+        unique_vals = list(anno_colors.keys())
+        val_to_idx = {v: i for i, v in enumerate(unique_vals)}
     
     # Helper to abbreviate long names
     def abbreviate(text, max_len=20):
@@ -300,15 +304,23 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         
         if has_anno:
             vals = meta[annotation_col].tolist()
-            colors = [anno_colors.get(v, '#999') for v in vals]
-            # Create a proper colored bar using Bar trace instead of Heatmap
-            fig.add_trace(go.Bar(
-                x=labels, 
-                y=[1] * len(labels),
-                marker=dict(color=colors),
-                showlegend=False,
+            # Map values to indices
+            z_vals = [[val_to_idx.get(v, 0) for v in vals]]
+            # Create discrete colorscale
+            n_colors = len(unique_vals)
+            discrete_colorscale = []
+            for i, v in enumerate(unique_vals):
+                color = anno_colors.get(v, '#999')
+                discrete_colorscale.append([i/max(n_colors-1, 1), color])
+                if i < n_colors - 1:
+                    discrete_colorscale.append([(i+1)/max(n_colors-1, 1), color])
+            
+            fig.add_trace(go.Heatmap(
+                z=z_vals, x=labels, y=[''],
+                colorscale=discrete_colorscale,
+                showscale=False, 
                 hoverinfo='skip',
-                width=1
+                zmin=0, zmax=max(n_colors-1, 1)
             ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
@@ -336,14 +348,14 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         if has_anno:
             # Hide axes for annotation bar row
             fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
-            fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, visible=False, row=1, col=i)
+            fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
         fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:
         for v, c in anno_colors.items():
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=12, color=c), name=str(v), showlegend=True))
-        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True, barmode='stack')
+        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True)
     
     return fig
 

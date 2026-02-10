@@ -301,9 +301,15 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         if has_anno:
             vals = meta[annotation_col].tolist()
             colors = [anno_colors.get(v, '#999') for v in vals]
-            fig.add_trace(go.Heatmap(z=[[i for i in range(len(vals))]], x=labels,
-                         colorscale=[[i/max(len(vals)-1,1), colors[i]] for i in range(len(vals))],
-                         showscale=False, hoverinfo='skip'), row=1, col=col_idx)
+            # Create a proper colored bar using Bar trace instead of Heatmap
+            fig.add_trace(go.Bar(
+                x=labels, 
+                y=[1] * len(labels),
+                marker=dict(color=colors),
+                showlegend=False,
+                hoverinfo='skip',
+                width=1
+            ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
         # Create custom hover text
@@ -328,15 +334,16 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     for i in range(1, n_splits + 1):
         hm_row = 2 if has_anno else 1
         if has_anno:
-            fig.update_xaxes(showticklabels=False, row=1, col=i)
-            fig.update_yaxes(showticklabels=False, row=1, col=i)
+            # Hide axes for annotation bar row
+            fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
+            fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, visible=False, row=1, col=i)
         fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:
         for v, c in anno_colors.items():
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=12, color=c), name=str(v), showlegend=True))
-        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True)
+        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True, barmode='stack')
     
     return fig
 
@@ -947,25 +954,31 @@ def main():
                 st.info("☝️ Select at least one species above")
             else:
                 # Apply filters
-                hm_df = filter_df(gene_filtered_df, species=hm_species, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
-                
-                st.subheader("Display Options")
-                hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
-                split_opts = ["None", "Species", "Dataset", "Cell Type"]
-                split_sel = hm_o1.selectbox("Split by", split_opts, key='hm_split')
-                anno_sel = hm_o2.selectbox("Annotation", split_opts, key='hm_anno')
-                cluster_rows = hm_o3.checkbox("Cluster rows", value=False, key='hm_clust_r')
-                cluster_cols = hm_o4.checkbox("Cluster cols", value=False, key='hm_clust_c')
-                
-                split_map = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}
-                split_by = split_map.get(split_sel)
-                anno_col = split_map.get(anno_sel)
-                
                 try:
-                    fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                except Exception as e:
-                    st.error(f"Error creating heatmap: {str(e)}")
+                    hm_df = filter_df(gene_filtered_df, species=hm_species, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
+                except Exception:
+                    hm_df = gene_filtered_df[gene_filtered_df['species'].isin(hm_species)]
+                
+                if hm_df.empty:
+                    st.warning("No data for selected filters")
+                else:
+                    st.subheader("Display Options")
+                    hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
+                    split_opts = ["None", "Species", "Dataset", "Cell Type"]
+                    split_sel = hm_o1.selectbox("Split by", split_opts, key='hm_split')
+                    anno_sel = hm_o2.selectbox("Annotation", split_opts, key='hm_anno')
+                    cluster_rows = hm_o3.checkbox("Cluster rows", value=False, key='hm_clust_r')
+                    cluster_cols = hm_o4.checkbox("Cluster cols", value=False, key='hm_clust_c')
+                    
+                    split_map = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}
+                    split_by = split_map.get(split_sel)
+                    anno_col = split_map.get(anno_sel)
+                    
+                    try:
+                        fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    except Exception as e:
+                        st.error(f"Error creating heatmap: {str(e)}")
     
     # --------------------------------------------------------------------------
     # Dot Plot Tab - WITH ITS OWN FILTERS

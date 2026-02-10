@@ -514,8 +514,10 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         fig.add_annotation(text=f"Error: {str(e)}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
 
-def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type, value_col='mean_expr'):
-    """Temporal heatmap."""
+def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type, value_col='mean_expr',
+                            cluster_genes=True, show_dendrogram=False, colorscale='RdBu_r',
+                            title_prefix='', font_scale=1.0):
+    """Publication-quality temporal heatmap with clustering options."""
     if temporal_df is None or temporal_df.empty or not genes:
         fig = go.Figure()
         fig.add_annotation(text="No data available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
@@ -543,24 +545,257 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
             fig.add_annotation(text="No data to display", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
+        # Sort columns by developmental time
         sorted_cols = sort_time_bins(pivot.columns.tolist())
         pivot = pivot[[c for c in sorted_cols if c in pivot.columns]]
         
+        # Z-score normalization per gene
         means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
-        pivot = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
+        pivot_z = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
         
-        fig = go.Figure(go.Heatmap(
-            z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
-            colorscale='RdBu_r', zmid=0, zmin=-3, zmax=3, colorbar=dict(title='Z-score')
+        # Cluster genes if requested
+        gene_order = pivot_z.index.tolist()
+        if cluster_genes and len(pivot_z) > 2:
+            try:
+                from scipy.cluster.hierarchy import linkage, leaves_list
+                from scipy.spatial.distance import pdist
+                link = linkage(pdist(pivot_z.fillna(0).values), method='average')
+                gene_order = [pivot_z.index[i] for i in leaves_list(link)]
+                pivot_z = pivot_z.loc[gene_order]
+            except:
+                pass
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Main heatmap
+        fig.add_trace(go.Heatmap(
+            z=pivot_z.values,
+            x=pivot_z.columns.tolist(),
+            y=pivot_z.index.tolist(),
+            colorscale=colorscale,
+            zmid=0, zmin=-3, zmax=3,
+            colorbar=dict(
+                title=dict(text='Z-score', font=dict(size=12*font_scale)),
+                tickfont=dict(size=10*font_scale),
+                thickness=15,
+                len=0.7,
+                x=1.02
+            ),
+            hovertemplate='Gene: %{y}<br>Stage: %{x}<br>Z-score: %{z:.2f}<extra></extra>'
         ))
         
+        # Publication-quality styling
         sample_disp = SAMPLE_TYPE_DISPLAY.get(sample_type, sample_type)
-        ct_str = f" ({cell_type})" if cell_type and cell_type != 'All' else ""
+        ct_str = f" - {cell_type}" if cell_type and cell_type != 'All' else " - All Cell Types"
+        title_text = f"{title_prefix}{species} {sample_disp}{ct_str}" if not title_prefix else title_prefix
+        
+        n_genes = len(pivot_z)
+        n_timepoints = len(pivot_z.columns)
+        
         fig.update_layout(
-            title=f"{species} {sample_disp} - Temporal Heatmap{ct_str}",
-            xaxis_title="Time", yaxis_title="Gene",
-            height=max(350, 40 + len(pivot) * 18), xaxis_tickangle=45, yaxis=dict(autorange='reversed')
+            title=dict(
+                text=f"<b>{title_text}</b>",
+                font=dict(size=16*font_scale, family='Arial'),
+                x=0.5, xanchor='center'
+            ),
+            xaxis=dict(
+                title=dict(text='Developmental Stage', font=dict(size=13*font_scale, family='Arial')),
+                tickfont=dict(size=11*font_scale, family='Arial'),
+                tickangle=45,
+                side='bottom'
+            ),
+            yaxis=dict(
+                title=dict(text='Gene', font=dict(size=13*font_scale, family='Arial')),
+                tickfont=dict(size=10*font_scale, family='Arial'),
+                autorange='reversed'
+            ),
+            height=max(400, 50 + n_genes * 20),
+            width=max(600, 150 + n_timepoints * 60),
+            margin=dict(l=120, r=100, t=80, b=120),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family='Arial')
         )
+        
+        return fig
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error: {str(e)}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        return fig
+
+def create_temporal_heatmap_publication(temporal_df, genes, species, sample_type, cell_types,
+                                        value_col='mean_expr', cluster_genes=True, 
+                                        split_by_celltype=False, colorscale='RdBu_r', font_scale=1.0):
+    """
+    Publication-quality multi-panel temporal heatmap.
+    Can show multiple cell types side by side or stacked.
+    """
+    if temporal_df is None or temporal_df.empty or not genes:
+        fig = go.Figure()
+        fig.add_annotation(text="No data available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        return fig
+    
+    if not cell_types:
+        fig = go.Figure()
+        fig.add_annotation(text="Select at least one cell type", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        return fig
+    
+    # Limit for performance
+    cell_types = list(cell_types)[:6]
+    genes = list(genes)[:30]
+    
+    try:
+        df = temporal_df[temporal_df['species'] == species].copy()
+        if 'sample_type' in df.columns and sample_type:
+            df = df[df['sample_type'] == sample_type]
+        
+        df = df[df['gene_human'].fillna('').str.upper().isin(genes)]
+        df = df[df['cell_type'].isin(cell_types)]
+        
+        if df.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="No data for selected genes/cell types", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            return fig
+        
+        # Get sorted time bins
+        sorted_cols = sort_time_bins(df['time_bin'].dropna().unique().tolist())
+        
+        if split_by_celltype and len(cell_types) > 1:
+            # Create multi-panel figure
+            n_panels = len(cell_types)
+            fig = make_subplots(
+                rows=1, cols=n_panels,
+                subplot_titles=[f"<b>{ct}</b>" for ct in cell_types],
+                horizontal_spacing=0.08,
+                shared_yaxes=True
+            )
+            
+            # Compute global gene order from first cell type
+            first_ct_data = df[df['cell_type'] == cell_types[0]]
+            agg_first = first_ct_data.groupby(['gene_human', 'time_bin'])[value_col].mean().reset_index()
+            pivot_first = agg_first.pivot(index='gene_human', columns='time_bin', values=value_col)
+            
+            gene_order = pivot_first.index.tolist()
+            if cluster_genes and len(pivot_first) > 2:
+                try:
+                    means, stds = pivot_first.mean(axis=1), pivot_first.std(axis=1).replace(0, 1)
+                    pivot_z = pivot_first.sub(means, axis=0).div(stds, axis=0).fillna(0)
+                    link = linkage(pdist(pivot_z.values), method='average')
+                    gene_order = [pivot_z.index[i] for i in leaves_list(link)]
+                except:
+                    pass
+            
+            for idx, ct in enumerate(cell_types):
+                ct_data = df[df['cell_type'] == ct]
+                agg = ct_data.groupby(['gene_human', 'time_bin'])[value_col].mean().reset_index()
+                pivot = agg.pivot(index='gene_human', columns='time_bin', values=value_col)
+                
+                # Reorder columns and rows
+                pivot = pivot[[c for c in sorted_cols if c in pivot.columns]]
+                pivot = pivot.reindex([g for g in gene_order if g in pivot.index])
+                
+                # Z-score normalize
+                means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
+                pivot_z = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
+                
+                fig.add_trace(go.Heatmap(
+                    z=pivot_z.values,
+                    x=pivot_z.columns.tolist(),
+                    y=pivot_z.index.tolist(),
+                    colorscale=colorscale,
+                    zmid=0, zmin=-3, zmax=3,
+                    showscale=(idx == n_panels - 1),
+                    colorbar=dict(
+                        title='Z-score',
+                        thickness=15,
+                        len=0.7,
+                        x=1.02
+                    ) if idx == n_panels - 1 else None,
+                    hovertemplate=f'{ct}<br>Gene: %{{y}}<br>Stage: %{{x}}<br>Z: %{{z:.2f}}<extra></extra>'
+                ), row=1, col=idx+1)
+                
+                fig.update_xaxes(tickangle=45, tickfont=dict(size=9*font_scale), row=1, col=idx+1)
+                if idx == 0:
+                    fig.update_yaxes(tickfont=dict(size=9*font_scale), row=1, col=idx+1)
+                else:
+                    fig.update_yaxes(showticklabels=False, row=1, col=idx+1)
+            
+            sample_disp = SAMPLE_TYPE_DISPLAY.get(sample_type, sample_type)
+            n_genes = len(gene_order)
+            
+            fig.update_layout(
+                title=dict(
+                    text=f"<b>{species} {sample_disp} - Temporal Expression by Cell Type</b>",
+                    font=dict(size=16*font_scale, family='Arial'),
+                    x=0.5, xanchor='center'
+                ),
+                height=max(450, 60 + n_genes * 18),
+                width=max(800, 200 * n_panels),
+                margin=dict(l=120, r=80, t=100, b=120),
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(family='Arial')
+            )
+            
+            # Style subplot titles
+            for annotation in fig['layout']['annotations']:
+                annotation['font'] = dict(size=11*font_scale, family='Arial')
+            
+        else:
+            # Single heatmap with averaged expression across cell types
+            agg = df.groupby(['gene_human', 'time_bin'])[value_col].mean().reset_index()
+            pivot = agg.pivot(index='gene_human', columns='time_bin', values=value_col)
+            pivot = pivot[[c for c in sorted_cols if c in pivot.columns]]
+            
+            # Z-score and cluster
+            means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
+            pivot_z = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
+            
+            if cluster_genes and len(pivot_z) > 2:
+                try:
+                    link = linkage(pdist(pivot_z.fillna(0).values), method='average')
+                    gene_order = [pivot_z.index[i] for i in leaves_list(link)]
+                    pivot_z = pivot_z.loc[gene_order]
+                except:
+                    pass
+            
+            fig = go.Figure(go.Heatmap(
+                z=pivot_z.values,
+                x=pivot_z.columns.tolist(),
+                y=pivot_z.index.tolist(),
+                colorscale=colorscale,
+                zmid=0, zmin=-3, zmax=3,
+                colorbar=dict(title='Z-score', thickness=15, len=0.7),
+                hovertemplate='Gene: %{y}<br>Stage: %{x}<br>Z-score: %{z:.2f}<extra></extra>'
+            ))
+            
+            sample_disp = SAMPLE_TYPE_DISPLAY.get(sample_type, sample_type)
+            ct_str = ", ".join(cell_types[:3]) + ("..." if len(cell_types) > 3 else "")
+            
+            fig.update_layout(
+                title=dict(
+                    text=f"<b>{species} {sample_disp} - {ct_str}</b>",
+                    font=dict(size=16*font_scale, family='Arial'),
+                    x=0.5, xanchor='center'
+                ),
+                xaxis=dict(
+                    title='Developmental Stage',
+                    tickangle=45,
+                    tickfont=dict(size=11*font_scale)
+                ),
+                yaxis=dict(
+                    title='Gene',
+                    tickfont=dict(size=10*font_scale),
+                    autorange='reversed'
+                ),
+                height=max(400, 50 + len(pivot_z) * 18),
+                margin=dict(l=120, r=80, t=80, b=120),
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(family='Arial')
+            )
+        
         return fig
     except Exception as e:
         fig = go.Figure()
@@ -1085,8 +1320,9 @@ def main():
         else:
             temporal_df = data['temporal']
             
-            viz_type = st.selectbox("View", ["Trajectory", "Heatmap", "Multi-Species", "Timepoint Snapshot"], key='temp_viz')
+            viz_type = st.selectbox("View", ["Trajectory", "Heatmap (Publication)", "Heatmap (Multi-Cell Type)", "Multi-Species", "Timepoint Snapshot"], key='temp_viz')
             
+            # Species and sample type selection (common to most views)
             if viz_type != "Multi-Species":
                 tc1, tc2 = st.columns(2)
                 with tc1:
@@ -1109,65 +1345,118 @@ def main():
                 temp_sample_type = None
                 avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
             
-            # USE FORM TO PREVENT RERUN ON EVERY CLICK
-            MAX_CELL_TYPES = 6
-            st.caption(f"⚡ Select up to {MAX_CELL_TYPES} cell types, then click 'Generate Plot'")
-            
-            with st.form(key=f"temporal_form_{viz_type}_{temp_species}_{temp_sample_type}"):
-                sel_temp_cts = st.multiselect(
-                    "Cell Types", 
-                    avail_temp_cts, 
-                    default=[],
-                    max_selections=MAX_CELL_TYPES
-                )
+            # ========== HEATMAP (PUBLICATION) - Single cell type, publication quality ==========
+            if viz_type == "Heatmap (Publication)":
+                with st.form(key="temporal_heatmap_pub_form"):
+                    st.markdown("**Publication-Quality Temporal Heatmap**")
+                    
+                    hm_ct = st.selectbox("Cell Type", ['All Cell Types'] + avail_temp_cts)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        cluster_genes = st.checkbox("Cluster genes", value=True)
+                    with col2:
+                        colorscale = st.selectbox("Color scale", ['RdBu_r', 'Viridis', 'Plasma', 'Blues', 'Reds'])
+                    with col3:
+                        font_scale = st.slider("Font scale", 0.8, 1.5, 1.0, 0.1)
+                    
+                    submitted = st.form_submit_button("📊 Generate Heatmap", type="primary", use_container_width=True)
                 
-                # Additional options inside form based on viz type
-                if viz_type == "Heatmap":
-                    hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct_form')
-                elif viz_type == "Multi-Species":
-                    comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp_form')
-                elif viz_type == "Timepoint Snapshot":
-                    sp_df_snap = temporal_df[temporal_df['species'] == temp_species] if temp_species else temporal_df
-                    if 'sample_type' in sp_df_snap.columns and temp_sample_type:
-                        sp_df_snap = sp_df_snap[sp_df_snap['sample_type'] == temp_sample_type]
-                    avail_bins = sort_time_bins(sp_df_snap['time_bin'].dropna().unique().tolist())
-                    if avail_bins:
-                        sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin_form')
-                        snap_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene_form')
+                if submitted:
+                    cell_type_val = None if hm_ct == 'All Cell Types' else hm_ct
+                    fig = safe_plot(create_temporal_heatmap, temporal_df, selected_genes, temp_species, 
+                                   temp_sample_type, cell_type_val, value_metric, cluster_genes, 
+                                   False, colorscale, '', font_scale)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    st.caption("💡 Use the camera icon in the plot toolbar to download as PNG")
+            
+            # ========== HEATMAP (MULTI-CELL TYPE) - Compare across cell types ==========
+            elif viz_type == "Heatmap (Multi-Cell Type)":
+                with st.form(key="temporal_heatmap_multi_form"):
+                    st.markdown("**Compare Expression Across Cell Types**")
+                    st.caption("Select up to 6 cell types to compare side-by-side")
+                    
+                    sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=[], max_selections=6)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        cluster_genes = st.checkbox("Cluster genes", value=True)
+                    with col2:
+                        split_panels = st.checkbox("Split into panels", value=True)
+                    with col3:
+                        colorscale = st.selectbox("Color scale", ['RdBu_r', 'Viridis', 'Plasma'])
+                    
+                    submitted = st.form_submit_button("📊 Generate Heatmap", type="primary", use_container_width=True)
+                
+                if submitted:
+                    if not sel_temp_cts:
+                        st.warning("Please select at least one cell type")
                     else:
-                        sel_bin = None
-                        snap_gene = None
-                
-                # Submit button - plot only generates when clicked
-                submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
+                        fig = safe_plot(create_temporal_heatmap_publication, temporal_df, selected_genes, 
+                                       temp_species, temp_sample_type, sel_temp_cts, value_metric,
+                                       cluster_genes, split_panels, colorscale)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
             
-            # Only generate plot when form is submitted
-            if submitted:
-                if not sel_temp_cts:
-                    st.warning("Please select at least one cell type")
-                else:
-                    # Create plots based on view type
-                    if viz_type == "Trajectory":
+            # ========== TRAJECTORY ==========
+            elif viz_type == "Trajectory":
+                with st.form(key="temporal_trajectory_form"):
+                    st.markdown("**Temporal Trajectory Plot**")
+                    st.caption("Select up to 6 cell types")
+                    
+                    sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=[], max_selections=6)
+                    submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
+                
+                if submitted:
+                    if not sel_temp_cts:
+                        st.warning("Please select at least one cell type")
+                    else:
                         fig = safe_plot(create_temporal_trajectory, temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
                         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            
+            # ========== MULTI-SPECIES ==========
+            elif viz_type == "Multi-Species":
+                with st.form(key="temporal_multispecies_form"):
+                    st.markdown("**Cross-Species Temporal Comparison**")
                     
-                    elif viz_type == "Heatmap":
-                        fig = safe_plot(create_temporal_heatmap, temporal_df, selected_genes, temp_species, temp_sample_type, 
-                                       hm_ct if hm_ct != 'All' else None, value_metric)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                    
-                    elif viz_type == "Multi-Species":
+                    comp_gene = st.selectbox("Gene", selected_genes)
+                    sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=[], max_selections=6)
+                    submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
+                
+                if submitted:
+                    if not sel_temp_cts:
+                        st.warning("Please select at least one cell type")
+                    else:
                         fig = safe_plot(create_multi_species_comparison, temporal_df, comp_gene, sel_temp_cts, value_metric)
                         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            
+            # ========== TIMEPOINT SNAPSHOT ==========
+            elif viz_type == "Timepoint Snapshot":
+                sp_df_snap = temporal_df[temporal_df['species'] == temp_species] if temp_species else temporal_df
+                if 'sample_type' in sp_df_snap.columns and temp_sample_type:
+                    sp_df_snap = sp_df_snap[sp_df_snap['sample_type'] == temp_sample_type]
+                avail_bins = sort_time_bins(sp_df_snap['time_bin'].dropna().unique().tolist())
+                
+                if not avail_bins:
+                    st.warning("No timepoints available for this species/sample type")
+                else:
+                    with st.form(key="temporal_snapshot_form"):
+                        st.markdown("**Expression at Specific Timepoint**")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            sel_bin = st.selectbox("Timepoint", avail_bins)
+                        with col2:
+                            snap_gene = st.selectbox("Gene", selected_genes)
+                        
+                        sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=[], max_selections=6)
+                        submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
                     
-                    elif viz_type == "Timepoint Snapshot":
-                        if sel_bin and snap_gene:
+                    if submitted:
+                        if not sel_temp_cts:
+                            st.warning("Please select at least one cell type")
+                        else:
                             fig = safe_plot(create_timepoint_snapshot, temporal_df, snap_gene, sel_bin, sel_temp_cts, value_metric)
                             st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                        else:
-                            st.warning("No timepoints available for this species/sample type")
-            else:
-                st.info("👆 Select options above and click 'Generate Plot' to view")
     
     # --------------------------------------------------------------------------
     # Cross-Species Tab - WITH ITS OWN FILTERS

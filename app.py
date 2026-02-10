@@ -939,36 +939,85 @@ def create_species_bar(ortholog_df, genes, cell_types):
         return fig
 
 def create_correlation_heatmap(species_comparison_df, genes):
-    if species_comparison_df is None or species_comparison_df.empty:
+    if species_comparison_df is None:
         fig = go.Figure()
-        fig.add_annotation(text="Species comparison data not available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="Species comparison data not available.<br>Generate species_comparison.parquet file.", 
+                          x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=300)
+        return fig
+    
+    if species_comparison_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Species comparison data is empty", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.update_layout(height=300)
         return fig
     
     if not genes:
         fig = go.Figure()
-        fig.add_annotation(text="Select genes", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.add_annotation(text="Select genes in the sidebar", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.update_layout(height=300)
         return fig
     
     try:
-        df = species_comparison_df[species_comparison_df['gene_human'].fillna('').str.upper().isin(genes)].copy()
+        # Check what column contains gene info
+        gene_col = None
+        for col in ['gene_human', 'gene', 'gene_symbol']:
+            if col in species_comparison_df.columns:
+                gene_col = col
+                break
+        
+        if gene_col is None:
+            fig = go.Figure()
+            avail_cols = ', '.join(species_comparison_df.columns.tolist()[:10])
+            fig.add_annotation(text=f"No gene column found.<br>Columns: {avail_cols}", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.update_layout(height=300)
+            return fig
+        
+        df = species_comparison_df[species_comparison_df[gene_col].fillna('').str.upper().isin(genes)].copy()
         
         if df.empty:
-            avail = species_comparison_df['gene_human'].unique()[:10].tolist()
+            avail = species_comparison_df[gene_col].dropna().unique()[:10].tolist()
             fig = go.Figure()
-            fig.add_annotation(text=f"No data. Try: {', '.join(avail)}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"Selected genes not in species comparison data.<br>Available genes include: {', '.join(avail)}", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, align='center')
+            fig.update_layout(height=300)
+            return fig
+        
+        # Check for required columns
+        if 'species_1' not in df.columns or 'species_2' not in df.columns:
+            fig = go.Figure()
+            fig.add_annotation(text=f"Missing species columns. Available: {', '.join(df.columns.tolist())}", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.update_layout(height=300)
+            return fig
+        
+        corr_col = 'expression_correlation' if 'expression_correlation' in df.columns else 'correlation' if 'correlation' in df.columns else None
+        if corr_col is None:
+            fig = go.Figure()
+            fig.add_annotation(text="No correlation column found in data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.update_layout(height=300)
             return fig
         
         df['pair'] = df['species_1'] + ' vs ' + df['species_2']
-        pivot = df.pivot_table(index='gene_human', columns='pair', values='expression_correlation', aggfunc='mean')
+        pivot = df.pivot_table(index=gene_col, columns='pair', values=corr_col, aggfunc='mean')
+        
+        if pivot.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="Could not create pivot table", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.update_layout(height=300)
+            return fig
         
         fig = go.Figure(go.Heatmap(z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
                                    colorscale='RdBu', zmid=0, zmin=-1, zmax=1, colorbar=dict(title='ρ')))
-        fig.update_layout(title="Cross-Species Correlation", height=max(300, 40 + len(pivot) * 18),
-                         xaxis_tickangle=45, yaxis=dict(autorange='reversed'))
+        fig.update_layout(title="Cross-Species Expression Correlation", height=max(300, 40 + len(pivot) * 18),
+                         xaxis_tickangle=45, yaxis=dict(autorange='reversed'),
+                         font=PLOT_FONT)
         return fig
     except Exception as e:
         fig = go.Figure()
         fig.add_annotation(text=f"Error: {str(e)}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        fig.update_layout(height=300)
         return fig
 
 def create_ortholog_scatter(ortholog_df, gene, sp_x, sp_y):

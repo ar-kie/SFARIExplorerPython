@@ -703,45 +703,55 @@ def main():
     
     expr_df, risk_genes = data['expression'], data['risk_genes']
     
+    # Pre-compute gene lists for presets (do this once)
+    @st.cache_data
+    def get_preset_genes(_risk_genes, _expr_df):
+        presets = {}
+        try:
+            presets['SFARI Score 1'] = ", ".join(_risk_genes[_risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
+        except:
+            presets['SFARI Score 1'] = ""
+        try:
+            presets['SFARI Score 2'] = ", ".join(_risk_genes[_risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
+        except:
+            presets['SFARI Score 2'] = ""
+        try:
+            if 'syndromic' in _risk_genes.columns:
+                presets['SFARI Syndromic'] = ", ".join(_risk_genes[_risk_genes['syndromic'] == 1]['gene_symbol'].dropna().tolist())
+            else:
+                presets['SFARI Syndromic'] = ""
+        except:
+            presets['SFARI Syndromic'] = ""
+        try:
+            presets['Top Variable'] = ", ".join(_expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
+        except:
+            presets['Top Variable'] = ""
+        return presets
+    
+    preset_genes = get_preset_genes(risk_genes, expr_df)
+    
     # ==========================================================================
     # Sidebar - ONLY GENE SELECTION
     # ==========================================================================
     with st.sidebar:
         st.header("🧬 Step 1: Select Genes")
         
-        # Initialize session state
-        if 'gene_text' not in st.session_state:
-            st.session_state.gene_text = ""
-        if 'last_preset' not in st.session_state:
-            st.session_state.last_preset = "Custom"
-        
         gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"])
         
-        # Update gene text when preset changes
-        if gene_preset != st.session_state.last_preset:
-            st.session_state.last_preset = gene_preset
-            if gene_preset == "SFARI Score 1":
-                st.session_state.gene_text = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
-            elif gene_preset == "SFARI Score 2":
-                st.session_state.gene_text = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
-            elif gene_preset == "SFARI Syndromic":
-                st.session_state.gene_text = ", ".join(risk_genes[risk_genes.get('syndromic', pd.Series([0])) == 1]['gene_symbol'].dropna().tolist()) if 'syndromic' in risk_genes.columns else ""
-            elif gene_preset == "Top Variable":
-                st.session_state.gene_text = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
-            else:
-                st.session_state.gene_text = ""
+        # Get default value based on preset
+        if gene_preset in preset_genes:
+            default_value = preset_genes[gene_preset]
+        else:
+            default_value = ""
         
-        # Text area with session state
+        # Text area - key changes with preset to force update
         gene_input = st.text_area(
             "Enter genes (comma or space separated)", 
-            value=st.session_state.gene_text,
+            value=default_value,
             height=120,
             placeholder="SHANK3, MECP2, CHD8, SCN2A",
-            key="gene_input_area"
+            key=f"gene_area_{gene_preset}"
         )
-        
-        # Update session state if user types
-        st.session_state.gene_text = gene_input
         
         # Search button for mobile
         st.button("🔍 Search Genes", type="primary", use_container_width=True)
@@ -878,13 +888,21 @@ def main():
                 
                 st.subheader("Display Options")
                 hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
-                split_by = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o1.selectbox("Split by", ["None", "Species", "Dataset", "Cell Type"])]
-                anno_col = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o2.selectbox("Annotation", ["None", "Species", "Dataset", "Cell Type"])]
-                cluster_rows = hm_o3.checkbox("Cluster rows", value=False)
-                cluster_cols = hm_o4.checkbox("Cluster cols", value=False)
+                split_opts = ["None", "Species", "Dataset", "Cell Type"]
+                split_sel = hm_o1.selectbox("Split by", split_opts, key='hm_split')
+                anno_sel = hm_o2.selectbox("Annotation", split_opts, key='hm_anno')
+                cluster_rows = hm_o3.checkbox("Cluster rows", value=False, key='hm_clust_r')
+                cluster_cols = hm_o4.checkbox("Cluster cols", value=False, key='hm_clust_c')
                 
-                fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                split_map = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}
+                split_by = split_map.get(split_sel)
+                anno_col = split_map.get(anno_sel)
+                
+                try:
+                    fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                except Exception as e:
+                    st.error(f"Error creating heatmap: {str(e)}")
     
     # --------------------------------------------------------------------------
     # Dot Plot Tab - WITH ITS OWN FILTERS

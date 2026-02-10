@@ -1109,54 +1109,65 @@ def main():
                 temp_sample_type = None
                 avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
             
-            # Cell type selection with HARD LIMIT enforced by Streamlit
+            # USE FORM TO PREVENT RERUN ON EVERY CLICK
             MAX_CELL_TYPES = 6
-            st.caption(f"⚡ Maximum {MAX_CELL_TYPES} cell types allowed")
+            st.caption(f"⚡ Select up to {MAX_CELL_TYPES} cell types, then click 'Generate Plot'")
             
-            # Use max_selections to prevent selecting too many (enforced at UI level)
-            ct_key = f"temp_cts_{viz_type}_{temp_species}_{temp_sample_type}"
-            
-            sel_temp_cts = st.multiselect(
-                "Cell Types", 
-                avail_temp_cts, 
-                default=[],
-                key=ct_key,
-                max_selections=MAX_CELL_TYPES  # Hard limit enforced by Streamlit UI
-            )
-            
-            # Handle empty selection
-            if not sel_temp_cts:
-                st.info("☝️ Select cell types above to view the plot")
-            else:
-                # Create plots based on view type
-                if viz_type == "Trajectory":
-                    fig = safe_plot(create_temporal_trajectory, temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            with st.form(key=f"temporal_form_{viz_type}_{temp_species}_{temp_sample_type}"):
+                sel_temp_cts = st.multiselect(
+                    "Cell Types", 
+                    avail_temp_cts, 
+                    default=[],
+                    max_selections=MAX_CELL_TYPES
+                )
                 
-                elif viz_type == "Heatmap":
-                    hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct')
-                    fig = safe_plot(create_temporal_heatmap, temporal_df, selected_genes, temp_species, temp_sample_type, 
-                                   hm_ct if hm_ct != 'All' else None, value_metric)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                
+                # Additional options inside form based on viz type
+                if viz_type == "Heatmap":
+                    hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct_form')
                 elif viz_type == "Multi-Species":
-                    comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp')
-                    fig = safe_plot(create_multi_species_comparison, temporal_df, comp_gene, sel_temp_cts, value_metric)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                
+                    comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp_form')
                 elif viz_type == "Timepoint Snapshot":
-                    sp_df = temporal_df[temporal_df['species'] == temp_species]
-                    if 'sample_type' in sp_df.columns:
-                        sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
-                    avail_bins = sort_time_bins(sp_df['time_bin'].dropna().unique().tolist())
-                
+                    sp_df_snap = temporal_df[temporal_df['species'] == temp_species] if temp_species else temporal_df
+                    if 'sample_type' in sp_df_snap.columns and temp_sample_type:
+                        sp_df_snap = sp_df_snap[sp_df_snap['sample_type'] == temp_sample_type]
+                    avail_bins = sort_time_bins(sp_df_snap['time_bin'].dropna().unique().tolist())
                     if avail_bins:
-                        sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin')
-                        comp_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene')
-                        fig = safe_plot(create_timepoint_snapshot, temporal_df, comp_gene, sel_bin, sel_temp_cts, value_metric)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                        sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin_form')
+                        snap_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene_form')
                     else:
-                        st.warning("No timepoints available for this species/sample type")
+                        sel_bin = None
+                        snap_gene = None
+                
+                # Submit button - plot only generates when clicked
+                submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
+            
+            # Only generate plot when form is submitted
+            if submitted:
+                if not sel_temp_cts:
+                    st.warning("Please select at least one cell type")
+                else:
+                    # Create plots based on view type
+                    if viz_type == "Trajectory":
+                        fig = safe_plot(create_temporal_trajectory, temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    
+                    elif viz_type == "Heatmap":
+                        fig = safe_plot(create_temporal_heatmap, temporal_df, selected_genes, temp_species, temp_sample_type, 
+                                       hm_ct if hm_ct != 'All' else None, value_metric)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    
+                    elif viz_type == "Multi-Species":
+                        fig = safe_plot(create_multi_species_comparison, temporal_df, comp_gene, sel_temp_cts, value_metric)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    
+                    elif viz_type == "Timepoint Snapshot":
+                        if sel_bin and snap_gene:
+                            fig = safe_plot(create_timepoint_snapshot, temporal_df, snap_gene, sel_bin, sel_temp_cts, value_metric)
+                            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                        else:
+                            st.warning("No timepoints available for this species/sample type")
+            else:
+                st.info("👆 Select options above and click 'Generate Plot' to view")
     
     # --------------------------------------------------------------------------
     # Cross-Species Tab - WITH ITS OWN FILTERS

@@ -21,7 +21,7 @@ import re
 
 st.set_page_config(page_title="SFARI Gene Explorer", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
 
-# Plotly config for mobile-friendly controls
+# Plotly config for mobile-friendly controls and proper downloads
 PLOTLY_CONFIG = {
     'displayModeBar': True,
     'displaylogo': False,
@@ -29,7 +29,20 @@ PLOTLY_CONFIG = {
     'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
     'scrollZoom': True,
     'responsive': True,
+    'toImageButtonOptions': {
+        'format': 'png',
+        'filename': 'sfari_plot',
+        'height': None,  # Use current height
+        'width': None,   # Use current width
+        'scale': 2       # 2x resolution for better quality
+    }
 }
+
+# Fixed font sizes that don't change on zoom
+PLOT_FONT = dict(family="Arial, sans-serif", size=12)
+PLOT_TITLE_FONT = dict(family="Arial, sans-serif", size=14)
+PLOT_AXIS_FONT = dict(family="Arial, sans-serif", size=11)
+PLOT_TICK_FONT = dict(family="Arial, sans-serif", size=10)
 
 st.markdown("""
 <style>
@@ -368,12 +381,14 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         
         sample_disp = SAMPLE_TYPE_DISPLAY.get(sample_type, sample_type)
         fig.update_layout(
-            title=f"{species} {sample_disp} - Temporal Expression",
+            title=dict(text=f"{species} {sample_disp} - Temporal Expression", font=PLOT_TITLE_FONT),
             xaxis_title="Developmental Stage", yaxis_title="Mean Expression",
-            height=480, legend=dict(orientation='v', y=1, x=1.02, xanchor='left'),
+            height=480, 
+            legend=dict(orientation='v', y=1, x=1.02, xanchor='left', font=PLOT_TICK_FONT),
             margin=dict(b=80, r=140),
-            # Force x-axis category order
-            xaxis=dict(categoryorder='array', categoryarray=bins)
+            font=PLOT_FONT,
+            xaxis=dict(categoryorder='array', categoryarray=bins, tickfont=PLOT_TICK_FONT, title_font=PLOT_AXIS_FONT),
+            yaxis=dict(tickfont=PLOT_TICK_FONT, title_font=PLOT_AXIS_FONT)
         )
         return fig
     except Exception as e:
@@ -694,29 +709,42 @@ def main():
     with st.sidebar:
         st.header("🧬 Step 1: Select Genes")
         
+        # Initialize session state
+        if 'gene_text' not in st.session_state:
+            st.session_state.gene_text = ""
+        if 'last_preset' not in st.session_state:
+            st.session_state.last_preset = "Custom"
+        
         gene_preset = st.selectbox("Quick Sets", ["Custom", "SFARI Score 1", "SFARI Score 2", "SFARI Syndromic", "Top Variable"])
         
-        # Build preset gene list based on selection
-        if gene_preset == "SFARI Score 1":
-            default_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
-        elif gene_preset == "SFARI Score 2":
-            default_genes = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
-        elif gene_preset == "SFARI Syndromic":
-            default_genes = ", ".join(risk_genes[risk_genes.get('syndromic', pd.Series([0])) == 1]['gene_symbol'].dropna().tolist()) if 'syndromic' in risk_genes.columns else ""
-        elif gene_preset == "Top Variable":
-            default_genes = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
-        else:
-            default_genes = ""
+        # Update gene text when preset changes
+        if gene_preset != st.session_state.last_preset:
+            st.session_state.last_preset = gene_preset
+            if gene_preset == "SFARI Score 1":
+                st.session_state.gene_text = ", ".join(risk_genes[risk_genes['gene_score'] == 1]['gene_symbol'].dropna().tolist())
+            elif gene_preset == "SFARI Score 2":
+                st.session_state.gene_text = ", ".join(risk_genes[risk_genes['gene_score'] == 2]['gene_symbol'].dropna().tolist())
+            elif gene_preset == "SFARI Syndromic":
+                st.session_state.gene_text = ", ".join(risk_genes[risk_genes.get('syndromic', pd.Series([0])) == 1]['gene_symbol'].dropna().tolist()) if 'syndromic' in risk_genes.columns else ""
+            elif gene_preset == "Top Variable":
+                st.session_state.gene_text = ", ".join(expr_df.groupby('gene_human')['mean_expr'].var().sort_values(ascending=False).head(50).index.tolist())
+            else:
+                st.session_state.gene_text = ""
         
-        # Use a form so Enter key or button submits on mobile
-        with st.form(key="gene_form"):
-            gene_input = st.text_area(
-                "Enter genes (comma or space separated)", 
-                value=default_genes,
-                height=120,
-                placeholder="SHANK3, MECP2, CHD8, SCN2A"
-            )
-            submitted = st.form_submit_button("🔍 Search Genes", use_container_width=True, type="primary")
+        # Text area with session state
+        gene_input = st.text_area(
+            "Enter genes (comma or space separated)", 
+            value=st.session_state.gene_text,
+            height=120,
+            placeholder="SHANK3, MECP2, CHD8, SCN2A",
+            key="gene_input_area"
+        )
+        
+        # Update session state if user types
+        st.session_state.gene_text = gene_input
+        
+        # Search button for mobile
+        st.button("🔍 Search Genes", type="primary", use_container_width=True)
         
         input_genes = parse_genes(gene_input)
         
@@ -826,27 +854,37 @@ def main():
                 hm_species = st.multiselect("Species", avail_species, default=avail_species, key='hm_sp')
             
             with hm_c2:
-                hm_df_sp = filter_df(gene_filtered_df, species=hm_species or None)
-                avail_datasets = get_unique(hm_df_sp, 'tissue')
+                if hm_species:
+                    hm_df_sp = filter_df(gene_filtered_df, species=hm_species)
+                    avail_datasets = get_unique(hm_df_sp, 'tissue')
+                else:
+                    avail_datasets = []
                 hm_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='hm_ds')
             
             with hm_c3:
-                hm_df_ds = filter_df(hm_df_sp, datasets=hm_datasets or None)
-                avail_cts = get_unique(hm_df_ds, 'cell_type')
+                if hm_species:
+                    hm_df_ds = filter_df(hm_df_sp, datasets=hm_datasets or None)
+                    avail_cts = get_unique(hm_df_ds, 'cell_type')
+                else:
+                    avail_cts = []
                 hm_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='hm_ct')
             
-            # Apply filters
-            hm_df = filter_df(gene_filtered_df, species=hm_species or None, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
-            
-            st.subheader("Display Options")
-            hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
-            split_by = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o1.selectbox("Split by", ["None", "Species", "Dataset", "Cell Type"])]
-            anno_col = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o2.selectbox("Annotation", ["None", "Species", "Dataset", "Cell Type"])]
-            cluster_rows = hm_o3.checkbox("Cluster rows", value=False)
-            cluster_cols = hm_o4.checkbox("Cluster cols", value=False)
-            
-            fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            # Check for empty species
+            if not hm_species:
+                st.info("☝️ Select at least one species above")
+            else:
+                # Apply filters
+                hm_df = filter_df(gene_filtered_df, species=hm_species, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
+                
+                st.subheader("Display Options")
+                hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
+                split_by = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o1.selectbox("Split by", ["None", "Species", "Dataset", "Cell Type"])]
+                anno_col = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}[hm_o2.selectbox("Annotation", ["None", "Species", "Dataset", "Cell Type"])]
+                cluster_rows = hm_o3.checkbox("Cluster rows", value=False)
+                cluster_cols = hm_o4.checkbox("Cluster cols", value=False)
+                
+                fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Dot Plot Tab - WITH ITS OWN FILTERS
@@ -863,22 +901,31 @@ def main():
                 dp_species = st.multiselect("Species", avail_species, default=avail_species, key='dp_sp')
             
             with dp_c2:
-                dp_df_sp = filter_df(gene_filtered_df, species=dp_species or None)
-                avail_datasets = get_unique(dp_df_sp, 'tissue')
+                if dp_species:
+                    dp_df_sp = filter_df(gene_filtered_df, species=dp_species)
+                    avail_datasets = get_unique(dp_df_sp, 'tissue')
+                else:
+                    avail_datasets = []
                 dp_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='dp_ds')
             
             with dp_c3:
-                dp_df_ds = filter_df(dp_df_sp, datasets=dp_datasets or None)
-                avail_cts = get_unique(dp_df_ds, 'cell_type')
+                if dp_species:
+                    dp_df_ds = filter_df(dp_df_sp, datasets=dp_datasets or None)
+                    avail_cts = get_unique(dp_df_ds, 'cell_type')
+                else:
+                    avail_cts = []
                 dp_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='dp_ct')
             
-            dp_df = filter_df(gene_filtered_df, species=dp_species or None, datasets=dp_datasets or None, cell_types=dp_celltypes or None)
-            
-            group_by = st.selectbox("Group by", ['cell_type', 'tissue', 'species'], 
-                                   format_func=lambda x: 'Dataset' if x == 'tissue' else x.replace('_',' ').title())
-            
-            fig = create_dotplot(dp_df, group_by)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            if not dp_species:
+                st.info("☝️ Select at least one species above")
+            else:
+                dp_df = filter_df(gene_filtered_df, species=dp_species, datasets=dp_datasets or None, cell_types=dp_celltypes or None)
+                
+                group_by = st.selectbox("Group by", ['cell_type', 'tissue', 'species'], 
+                                       format_func=lambda x: 'Dataset' if x == 'tissue' else x.replace('_',' ').title())
+                
+                fig = create_dotplot(dp_df, group_by)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Temporal Tab - WITH ITS OWN FILTERS
@@ -1023,32 +1070,41 @@ def main():
                 dt_species = st.multiselect("Species", avail_species, default=avail_species, key='dt_sp')
             
             with dt_c2:
-                dt_df_sp = filter_df(gene_filtered_df, species=dt_species or None)
-                avail_datasets = get_unique(dt_df_sp, 'tissue')
+                if dt_species:
+                    dt_df_sp = filter_df(gene_filtered_df, species=dt_species)
+                    avail_datasets = get_unique(dt_df_sp, 'tissue')
+                else:
+                    avail_datasets = []
                 dt_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='dt_ds')
             
             with dt_c3:
-                dt_df_ds = filter_df(dt_df_sp, datasets=dt_datasets or None)
-                avail_cts = get_unique(dt_df_ds, 'cell_type')
+                if dt_species:
+                    dt_df_ds = filter_df(dt_df_sp, datasets=dt_datasets or None)
+                    avail_cts = get_unique(dt_df_ds, 'cell_type')
+                else:
+                    avail_cts = []
                 dt_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='dt_ct')
             
-            dt_df = filter_df(gene_filtered_df, species=dt_species or None, datasets=dt_datasets or None, cell_types=dt_celltypes or None)
-            
-            if not dt_df.empty:
-                dt_df = dt_df.copy()
-                dt_df['gene'] = dt_df['gene_human'].fillna(dt_df['gene_native'])
-                dt_df = dt_df.rename(columns={'tissue': 'Dataset'})
-                
-                if 'gene_symbol' in risk_genes.columns:
-                    dt_df['SFARI'] = dt_df['gene'].map(risk_genes.set_index('gene_symbol')['gene_score'].to_dict())
-                
-                default_cols = [c for c in ['gene', 'species', 'Dataset', 'cell_type', 'mean_expr', 'pct_expressing', 'n_cells'] if c in dt_df.columns]
-                cols = st.multiselect("Columns", dt_df.columns.tolist(), default=default_cols)
-                if cols:
-                    st.dataframe(dt_df[cols].sort_values(['gene', 'species']), height=450, use_container_width=True)
-                    st.download_button("Download CSV", dt_df[cols].to_csv(index=False), "data.csv", "text/csv")
+            if not dt_species:
+                st.info("☝️ Select at least one species above")
             else:
-                st.info("No data after filtering")
+                dt_df = filter_df(gene_filtered_df, species=dt_species, datasets=dt_datasets or None, cell_types=dt_celltypes or None)
+                
+                if not dt_df.empty:
+                    dt_df = dt_df.copy()
+                    dt_df['gene'] = dt_df['gene_human'].fillna(dt_df['gene_native'])
+                    dt_df = dt_df.rename(columns={'tissue': 'Dataset'})
+                    
+                    if 'gene_symbol' in risk_genes.columns:
+                        dt_df['SFARI'] = dt_df['gene'].map(risk_genes.set_index('gene_symbol')['gene_score'].to_dict())
+                    
+                    default_cols = [c for c in ['gene', 'species', 'Dataset', 'cell_type', 'mean_expr', 'pct_expressing', 'n_cells'] if c in dt_df.columns]
+                    cols = st.multiselect("Columns", dt_df.columns.tolist(), default=default_cols)
+                    if cols:
+                        st.dataframe(dt_df[cols].sort_values(['gene', 'species']), height=450, use_container_width=True)
+                        st.download_button("Download CSV", dt_df[cols].to_csv(index=False), "data.csv", "text/csv")
+                else:
+                    st.info("No data after filtering")
     
     # --------------------------------------------------------------------------
     # About Tab - FULL VERSION

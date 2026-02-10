@@ -437,21 +437,21 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         fig.add_annotation(text="Select at least one cell type", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
-    # Hard limit cell types to prevent server crash
-    cell_types = cell_types[:10]
+    # Hard limit cell types to prevent server crash - STRICT
+    cell_types = list(cell_types)[:6]
+    genes = list(genes)[:20]  # Also limit genes
     
     try:
-        # Filter data efficiently
-        df = temporal_df[
+        # Filter data efficiently - do all filtering in one step
+        mask = (
             (temporal_df['species'] == species) & 
-            (temporal_df['cell_type'].isin(cell_types))
-        ].copy()
+            (temporal_df['cell_type'].isin(cell_types)) &
+            (temporal_df['gene_human'].fillna('').str.upper().isin(genes))
+        )
+        df = temporal_df.loc[mask].copy()
         
         if 'sample_type' in df.columns and sample_type:
             df = df[df['sample_type'] == sample_type]
-        
-        # Filter by genes
-        df = df[df['gene_human'].fillna('').str.upper().isin(genes)]
         
         if df.empty:
             fig = go.Figure()
@@ -574,6 +574,10 @@ def create_multi_species_comparison(temporal_df, gene, cell_types, value_col='me
         fig.add_annotation(text="Select a gene", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
+    # Hard limit cell types - STRICT
+    if cell_types:
+        cell_types = list(cell_types)[:6]
+    
     try:
         df = temporal_df[temporal_df['gene_human'].fillna('').str.upper() == gene.upper()].copy()
         if cell_types:
@@ -642,6 +646,7 @@ def create_timepoint_snapshot(temporal_df, gene, time_bin, cell_types, value_col
         df = df[df['gene_human'].fillna('').str.upper() == gene.upper()]
         df = df[df['time_bin'] == time_bin]
         if cell_types:
+            cell_types = cell_types[:10]  # Hard limit
             df = df[df['cell_type'].isin(cell_types)]
         
         if df.empty:
@@ -680,6 +685,7 @@ def create_species_bar(ortholog_df, genes, cell_types):
     try:
         df = ortholog_df[ortholog_df['gene_human'].fillna('').str.upper().isin(genes)].copy()
         if cell_types:
+            cell_types = cell_types[:10]  # Hard limit
             df = df[df['cell_type'].isin(cell_types)]
         
         if df.empty:
@@ -1103,34 +1109,24 @@ def main():
                 temp_sample_type = None
                 avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
             
-            # Cell type selection with HARD LIMIT to prevent server crash
-            MAX_CELL_TYPES = 10
-            st.caption(f"⚡ Select up to {MAX_CELL_TYPES} cell types for optimal performance")
+            # Cell type selection with HARD LIMIT enforced by Streamlit
+            MAX_CELL_TYPES = 6
+            st.caption(f"⚡ Maximum {MAX_CELL_TYPES} cell types allowed")
             
-            # Use a unique key that includes all filter states to prevent stale selections
+            # Use max_selections to prevent selecting too many (enforced at UI level)
             ct_key = f"temp_cts_{viz_type}_{temp_species}_{temp_sample_type}"
-            
-            # Get current selection, filter to valid options only
-            if ct_key in st.session_state:
-                current_sel = [ct for ct in st.session_state[ct_key] if ct in avail_temp_cts]
-            else:
-                current_sel = []
             
             sel_temp_cts = st.multiselect(
                 "Cell Types", 
                 avail_temp_cts, 
-                default=current_sel[:MAX_CELL_TYPES],
-                key=ct_key
+                default=[],
+                key=ct_key,
+                max_selections=MAX_CELL_TYPES  # Hard limit enforced by Streamlit UI
             )
-            
-            # HARD LIMIT - truncate if too many selected
-            if len(sel_temp_cts) > MAX_CELL_TYPES:
-                st.warning(f"⚠️ Maximum {MAX_CELL_TYPES} cell types allowed. Using first {MAX_CELL_TYPES} selected.")
-                sel_temp_cts = sel_temp_cts[:MAX_CELL_TYPES]
             
             # Handle empty selection
             if not sel_temp_cts:
-                st.info("☝️ Select at least one cell type above to view the plot")
+                st.info("☝️ Select cell types above to view the plot")
             else:
                 # Create plots based on view type
                 if viz_type == "Trajectory":

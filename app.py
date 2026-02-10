@@ -271,6 +271,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     
     n_splits = len(matrices)
     widths = [m.shape[1] for m in matrices]
+    total_cols = sum(widths)
     col_widths = [w/sum(widths) for w in widths]
     
     has_anno = annotation_col and annotation_col in col_meta.columns
@@ -283,10 +284,19 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         ptype = 'species' if annotation_col == 'species' else 'cell_type' if annotation_col == 'cell_type' else 'dataset'
         anno_colors = get_color_palette(col_meta[annotation_col].unique().tolist(), ptype)
     
+    # Helper to abbreviate long names
+    def abbreviate(text, max_len=20):
+        if len(text) <= max_len:
+            return text
+        return text[:max_len-2] + '..'
+    
     cbar_added = False
     for idx, (mat, meta) in enumerate(zip(matrices, metas)):
         col_idx = idx + 1
-        labels = [f"{meta['dataset'].iloc[i]}\n{meta['cell_type'].iloc[i]}" for i in range(len(meta))]
+        # Create abbreviated labels for x-axis
+        labels = [f"{abbreviate(meta['dataset'].iloc[i], 15)}<br>{abbreviate(meta['cell_type'].iloc[i], 18)}" for i in range(len(meta))]
+        # Full labels for hover
+        hover_labels = [f"{meta['species'].iloc[i]} | {meta['dataset'].iloc[i]} | {meta['cell_type'].iloc[i]}" for i in range(len(meta))]
         
         if has_anno:
             vals = meta[annotation_col].tolist()
@@ -296,21 +306,31 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
                          showscale=False, hoverinfo='skip'), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
+        # Create custom hover text
+        hover_text = [[f"Gene: {gene}<br>{hover_labels[j]}<br>Value: {mat.values[i,j]:.2f}" 
+                      for j in range(mat.shape[1])] for i, gene in enumerate(mat.index)]
+        
         fig.add_trace(go.Heatmap(z=mat.values, x=labels, y=mat.index.tolist(),
                      colorscale=colorscale, zmid=zmid if scale_rows else None, zmin=zmin, zmax=zmax, showscale=not cbar_added,
-                     colorbar=dict(title=cbar_title, thickness=12, len=0.6, tickfont=PLOT_TICK_FONT) if not cbar_added else None),
+                     colorbar=dict(title=cbar_title, thickness=12, len=0.6, tickfont=PLOT_TICK_FONT) if not cbar_added else None,
+                     hovertext=hover_text, hoverinfo='text'),
                      row=hm_row, col=col_idx)
         cbar_added = True
     
-    height = max(400, 60 + len(pivot) * 16)
-    fig.update_layout(height=height, margin=dict(l=200, r=80, t=80, b=120), showlegend=False, font=PLOT_FONT)
+    # Dynamic sizing based on number of columns
+    height = max(450, 60 + len(pivot) * 18)
+    bottom_margin = 180 if total_cols > 30 else 140 if total_cols > 15 else 120
+    tick_angle = 90 if total_cols > 30 else 60 if total_cols > 15 else 45
+    tick_size = 9 if total_cols > 40 else 10 if total_cols > 20 else 11
+    
+    fig.update_layout(height=height, margin=dict(l=200, r=80, t=80, b=bottom_margin), showlegend=False, font=PLOT_FONT)
     
     for i in range(1, n_splits + 1):
         hm_row = 2 if has_anno else 1
         if has_anno:
             fig.update_xaxes(showticklabels=False, row=1, col=i)
             fig.update_yaxes(showticklabels=False, row=1, col=i)
-        fig.update_xaxes(tickangle=45, tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
+        fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:
@@ -415,19 +435,22 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
                     hovertemplate=f"Gene: {gene}<br>Cell: {ct}<br>Time: %{{x}}<br>Expr: %{{y:.2f}}<extra></extra>"
                 ))
         
+        # Symbol legend - offset more to bottom
         if len(gene_list) > 1:
             sym_text = "Symbols: " + ", ".join([f"{g}({gene_syms[g]})" for g in gene_list[:5]])
-            fig.add_annotation(text=sym_text, x=0.5, y=-0.18, xref="paper", yref="paper", showarrow=False, font=dict(size=9))
+            if len(gene_list) > 5:
+                sym_text += f" +{len(gene_list)-5} more"
+            fig.add_annotation(text=sym_text, x=0.5, y=-0.28, xref="paper", yref="paper", showarrow=False, font=dict(size=10))
         
         sample_disp = SAMPLE_TYPE_DISPLAY.get(sample_type, sample_type)
         fig.update_layout(
             title=dict(text=f"{species} {sample_disp} - Temporal Expression", font=PLOT_TITLE_FONT),
             xaxis_title="Developmental Stage", yaxis_title="Mean Expression",
-            height=480, 
-            legend=dict(orientation='v', y=1, x=1.02, xanchor='left', font=PLOT_TICK_FONT),
-            margin=dict(b=80, r=140),
+            height=520, 
+            legend=dict(orientation='v', y=1, x=1.02, xanchor='left', font=PLOT_LEGEND_FONT),
+            margin=dict(b=120, r=140, t=60),
             font=PLOT_FONT,
-            xaxis=dict(categoryorder='array', categoryarray=bins, tickfont=PLOT_TICK_FONT, title_font=PLOT_AXIS_FONT),
+            xaxis=dict(categoryorder='array', categoryarray=bins, tickfont=PLOT_TICK_FONT, title_font=PLOT_AXIS_FONT, tickangle=45),
             yaxis=dict(tickfont=PLOT_TICK_FONT, title_font=PLOT_AXIS_FONT)
         )
         return fig

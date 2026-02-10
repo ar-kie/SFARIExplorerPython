@@ -437,14 +437,21 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
         fig.add_annotation(text="Select at least one cell type", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
         return fig
     
+    # Hard limit cell types to prevent server crash
+    cell_types = cell_types[:10]
+    
     try:
-        df = temporal_df[temporal_df['species'] == species].copy()
+        # Filter data efficiently
+        df = temporal_df[
+            (temporal_df['species'] == species) & 
+            (temporal_df['cell_type'].isin(cell_types))
+        ].copy()
+        
         if 'sample_type' in df.columns and sample_type:
             df = df[df['sample_type'] == sample_type]
         
+        # Filter by genes
         df = df[df['gene_human'].fillna('').str.upper().isin(genes)]
-        if cell_types:
-            df = df[df['cell_type'].isin(cell_types)]
         
         if df.empty:
             fig = go.Figure()
@@ -458,26 +465,25 @@ def create_temporal_trajectory(temporal_df, genes, species, sample_type, cell_ty
             fig.add_annotation(text="No timepoints available", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
+        # Pre-aggregate data to reduce trace count
+        agg_df = df.groupby(['cell_type', 'gene_human', 'time_bin'])[value_col].mean().reset_index()
+        agg_df['order'] = agg_df['time_bin'].map(lambda x: TIME_BIN_ORDER.get(x, 99))
+        agg_df = agg_df.sort_values(['cell_type', 'gene_human', 'order'])
+        
         fig = go.Figure()
-        ct_colors = get_color_palette(df['cell_type'].unique().tolist(), 'cell_type')
-        gene_list = df['gene_human'].unique().tolist()
+        ct_colors = get_color_palette(agg_df['cell_type'].unique().tolist(), 'cell_type')
+        gene_list = agg_df['gene_human'].unique().tolist()
         gene_syms = {g: GENE_SYMBOLS[i % len(GENE_SYMBOLS)] for i, g in enumerate(gene_list)}
         
-        for ct in df['cell_type'].unique():
-            ct_data = df[df['cell_type'] == ct]
+        for ct in agg_df['cell_type'].unique():
+            ct_data = agg_df[agg_df['cell_type'] == ct]
             for gene in gene_list:
-                g_data = ct_data[ct_data['gene_human'] == gene]
+                g_data = ct_data[ct_data['gene_human'] == gene].sort_values('order')
                 if g_data.empty: continue
-                
-                agg = g_data.groupby('time_bin')[value_col].mean().reset_index()
-                agg['order'] = agg['time_bin'].map(lambda x: TIME_BIN_ORDER.get(x, 99))
-                agg = agg.sort_values('order')
-                
-                if len(agg) == 0: continue
                 
                 show_leg = (gene == gene_list[0])
                 fig.add_trace(go.Scatter(
-                    x=agg['time_bin'], y=agg[value_col], mode='lines+markers',
+                    x=g_data['time_bin'].tolist(), y=g_data[value_col].tolist(), mode='lines+markers',
                     name=ct if show_leg else None, legendgroup=ct, showlegend=show_leg,
                     line=dict(color=ct_colors.get(ct, '#999'), width=2),
                     marker=dict(size=9, symbol=gene_syms.get(gene, 'circle'), color=ct_colors.get(ct, '#999')),
@@ -1097,37 +1103,50 @@ def main():
                 temp_sample_type = None
                 avail_temp_cts = sorted(temporal_df['cell_type'].unique().tolist())
             
-            # Cell type selection - NO defaults, user must select
-            sel_temp_cts = st.multiselect("Cell Types", avail_temp_cts, default=[], key=f"temp_cts_{viz_type}_{temp_species}_{temp_sample_type}")
+            # Cell type selection with HARD LIMIT to prevent server crash
+            MAX_CELL_TYPES = 10
+            st.caption(f"⚡ Select up to {MAX_CELL_TYPES} cell types for optimal performance")
             
-            # Handle empty selection - show message but don't crash
+            # Use a unique key that includes all filter states to prevent stale selections
+            ct_key = f"temp_cts_{viz_type}_{temp_species}_{temp_sample_type}"
+            
+            # Get current selection, filter to valid options only
+            if ct_key in st.session_state:
+                current_sel = [ct for ct in st.session_state[ct_key] if ct in avail_temp_cts]
+            else:
+                current_sel = []
+            
+            sel_temp_cts = st.multiselect(
+                "Cell Types", 
+                avail_temp_cts, 
+                default=current_sel[:MAX_CELL_TYPES],
+                key=ct_key
+            )
+            
+            # HARD LIMIT - truncate if too many selected
+            if len(sel_temp_cts) > MAX_CELL_TYPES:
+                st.warning(f"⚠️ Maximum {MAX_CELL_TYPES} cell types allowed. Using first {MAX_CELL_TYPES} selected.")
+                sel_temp_cts = sel_temp_cts[:MAX_CELL_TYPES]
+            
+            # Handle empty selection
             if not sel_temp_cts:
                 st.info("☝️ Select at least one cell type above to view the plot")
             else:
                 # Create plots based on view type
                 if viz_type == "Trajectory":
-                    try:
-                        fig = create_temporal_trajectory(temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                    except Exception as e:
-                        st.error(f"Error creating trajectory: {str(e)}")
+                    fig = safe_plot(create_temporal_trajectory, temporal_df, selected_genes, temp_species, temp_sample_type, sel_temp_cts, value_metric)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                 
                 elif viz_type == "Heatmap":
                     hm_ct = st.selectbox("Cell Type for Heatmap", ['All'] + avail_temp_cts, key='temp_hm_ct')
-                    try:
-                        fig = create_temporal_heatmap(temporal_df, selected_genes, temp_species, temp_sample_type, 
-                                                     hm_ct if hm_ct != 'All' else None, value_metric)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                    except Exception as e:
-                        st.error(f"Error creating heatmap: {str(e)}")
+                    fig = safe_plot(create_temporal_heatmap, temporal_df, selected_genes, temp_species, temp_sample_type, 
+                                   hm_ct if hm_ct != 'All' else None, value_metric)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                 
                 elif viz_type == "Multi-Species":
                     comp_gene = st.selectbox("Gene", selected_genes, key='temp_comp')
-                    try:
-                        fig = create_multi_species_comparison(temporal_df, comp_gene, sel_temp_cts, value_metric)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                    except Exception as e:
-                        st.error(f"Error creating comparison: {str(e)}")
+                    fig = safe_plot(create_multi_species_comparison, temporal_df, comp_gene, sel_temp_cts, value_metric)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                 
                 elif viz_type == "Timepoint Snapshot":
                     sp_df = temporal_df[temporal_df['species'] == temp_species]
@@ -1138,11 +1157,8 @@ def main():
                     if avail_bins:
                         sel_bin = st.selectbox("Timepoint", avail_bins, key='temp_bin')
                         comp_gene = st.selectbox("Gene", selected_genes, key='temp_snap_gene')
-                        try:
-                            fig = create_timepoint_snapshot(temporal_df, comp_gene, sel_bin, sel_temp_cts, value_metric)
-                            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                        except Exception as e:
-                            st.error(f"Error creating snapshot: {str(e)}")
+                        fig = safe_plot(create_timepoint_snapshot, temporal_df, comp_gene, sel_bin, sel_temp_cts, value_metric)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
                     else:
                         st.warning("No timepoints available for this species/sample type")
     

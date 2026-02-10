@@ -14,12 +14,42 @@ from scipy.spatial.distance import pdist
 from scipy.stats import spearmanr
 from typing import Optional, List, Dict
 import re
+from contextlib import contextmanager
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
 st.set_page_config(page_title="SFARI Gene Explorer", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
+
+# =============================================================================
+# Error Handling Utilities
+# =============================================================================
+
+@contextmanager
+def safe_execution(operation_name="operation"):
+    """Context manager for safe execution with user-friendly error handling."""
+    try:
+        yield
+    except Exception as e:
+        st.error(f"Error in {operation_name}: {str(e)}")
+        st.caption("Try adjusting your filters or refreshing the page.")
+
+def safe_plot(plot_func, *args, **kwargs):
+    """Safely execute a plot function and return empty figure on error."""
+    try:
+        return plot_func(*args, **kwargs)
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Error: {str(e)[:100]}...", 
+            x=0.5, y=0.5, 
+            xref="paper", yref="paper", 
+            showarrow=False,
+            font=dict(size=12, color='red')
+        )
+        fig.update_layout(height=300)
+        return fig
 
 # Plotly config for mobile-friendly controls and proper downloads
 PLOTLY_CONFIG = {
@@ -986,11 +1016,8 @@ def main():
                     split_by = split_map.get(split_sel)
                     anno_col = split_map.get(anno_sel)
                     
-                    try:
-                        fig = create_heatmap(hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-                    except Exception as e:
-                        st.error(f"Error creating heatmap: {str(e)}")
+                    fig = safe_plot(create_heatmap, hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Dot Plot Tab - WITH ITS OWN FILTERS
@@ -1336,5 +1363,48 @@ For questions, bug reports, or feature requests, please open an issue on
     st.divider()
     st.caption("SFARI Gene Explorer v4 | Built with Streamlit & Plotly")
 
+def safe_main():
+    """Wrapper that catches errors and provides recovery options."""
+    try:
+        # Initialize error tracking in session state
+        if 'error_count' not in st.session_state:
+            st.session_state.error_count = 0
+        if 'last_error' not in st.session_state:
+            st.session_state.last_error = None
+        
+        # If too many errors, offer reset
+        if st.session_state.error_count >= 3:
+            st.error("⚠️ Multiple errors detected. Your session may be in an unstable state.")
+            if st.button("🔄 Reset Session", type="primary"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+            st.info("Click the button above to reset, or try refreshing the page.")
+            return
+        
+        # Run main app
+        main()
+        
+        # Reset error count on successful run
+        st.session_state.error_count = 0
+        
+    except Exception as e:
+        st.session_state.error_count = st.session_state.get('error_count', 0) + 1
+        st.session_state.last_error = str(e)
+        
+        st.error(f"⚠️ An error occurred: {str(e)}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Try Again"):
+                st.rerun()
+        with col2:
+            if st.button("🧹 Reset Session"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+        
+        st.caption("If the problem persists, try refreshing the page or clearing your browser cache.")
+
 if __name__ == "__main__":
-    main()
+    safe_main()

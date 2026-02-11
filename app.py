@@ -930,8 +930,34 @@ def create_species_bar(ortholog_df, genes, cell_types):
         
         agg = df.groupby(['gene_human', 'species'])['mean_expr'].mean().reset_index()
         fig = px.bar(agg, x='gene_human', y='mean_expr', color='species', barmode='group',
-                    color_discrete_map=SPECIES_COLORS, title="Cross-Species Expression")
-        fig.update_layout(height=400, xaxis_tickangle=45, legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'))
+                    color_discrete_map=SPECIES_COLORS, title="<b>Cross-Species Expression</b>")
+        fig.update_layout(
+            height=450, 
+            xaxis=dict(
+                title='Gene',
+                tickangle=45,
+                title_font=PLOT_AXIS_FONT,
+                tickfont=PLOT_TICK_FONT,
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                mirror=True
+            ),
+            yaxis=dict(
+                title='Mean Expression',
+                title_font=PLOT_AXIS_FONT,
+                tickfont=PLOT_TICK_FONT,
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                mirror=True
+            ),
+            legend=dict(orientation='h', y=1.08, x=0.5, xanchor='center', font=PLOT_LEGEND_FONT),
+            font=PLOT_FONT,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=80, r=40, t=100, b=100)
+        )
         return fig
     except Exception as e:
         fig = go.Figure()
@@ -1009,10 +1035,34 @@ def create_correlation_heatmap(species_comparison_df, genes):
             return fig
         
         fig = go.Figure(go.Heatmap(z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
-                                   colorscale='RdBu', zmid=0, zmin=-1, zmax=1, colorbar=dict(title='ρ')))
-        fig.update_layout(title="Cross-Species Expression Correlation", height=max(300, 40 + len(pivot) * 18),
-                         xaxis_tickangle=45, yaxis=dict(autorange='reversed'),
-                         font=PLOT_FONT)
+                                   colorscale='RdBu', zmid=0, zmin=-1, zmax=1, 
+                                   colorbar=dict(title='ρ', tickfont=PLOT_TICK_FONT)))
+        fig.update_layout(
+            title=dict(text="<b>Cross-Species Expression Correlation</b>", font=PLOT_TITLE_FONT, x=0.5),
+            height=max(350, 50 + len(pivot) * 20),
+            xaxis=dict(
+                tickangle=45,
+                tickfont=PLOT_TICK_FONT,
+                title_font=PLOT_AXIS_FONT,
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                mirror=True
+            ),
+            yaxis=dict(
+                autorange='reversed',
+                tickfont=PLOT_TICK_FONT,
+                title_font=PLOT_AXIS_FONT,
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                mirror=True
+            ),
+            font=PLOT_FONT,
+            margin=dict(l=100, r=80, t=80, b=120),
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
         return fig
     except Exception as e:
         fig = go.Figure()
@@ -1035,24 +1085,49 @@ def create_ortholog_scatter(ortholog_df, gene, sp_x, sp_y):
         
         if merged.empty:
             fig = go.Figure()
-            fig.add_annotation(text=f"No common cell types", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"No common cell types between {sp_x} and {sp_y}", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
         corr = spearmanr(merged['x'], merged['y'])[0] if len(merged) >= 3 else float('nan')
         
         fig = px.scatter(merged, x='x', y='y', color='cell_type', color_discrete_map=CELLTYPE_COLORS,
-                        title=f"{gene.upper()}: {sp_x} vs {sp_y}")
+                        title=f"<b>{gene.upper()}: {sp_x} vs {sp_y}</b>")
         
         max_val = max(merged['x'].max(), merged['y'].max())
         fig.add_trace(go.Scatter(x=[0, max_val], y=[0, max_val], mode='lines', 
                                 line=dict(dash='dash', color='gray'), showlegend=False))
         
         if not np.isnan(corr):
-            fig.add_annotation(text=f"ρ = {corr:.3f}", x=0.95, y=0.05, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"ρ = {corr:.3f}", x=0.95, y=0.05, xref="paper", yref="paper", 
+                              showarrow=False, font=dict(size=14))
         
         fig.update_traces(marker=dict(size=11))
-        fig.update_layout(height=450, xaxis_title=f'{sp_x} Expression', yaxis_title=f'{sp_y} Expression',
-                         legend=dict(orientation='v', y=1, x=1.02, xanchor='left'))
+        fig.update_layout(
+            height=480, 
+            xaxis=dict(
+                title=f'{sp_x} Expression',
+                title_font=PLOT_AXIS_FONT,
+                tickfont=PLOT_TICK_FONT,
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                mirror=True
+            ),
+            yaxis=dict(
+                title=f'{sp_y} Expression',
+                title_font=PLOT_AXIS_FONT,
+                tickfont=PLOT_TICK_FONT,
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                mirror=True
+            ),
+            legend=dict(orientation='v', y=1, x=1.02, xanchor='left', font=PLOT_LEGEND_FONT),
+            font=PLOT_FONT,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=80, r=120, t=80, b=80)
+        )
         return fig
     except Exception as e:
         fig = go.Figure()
@@ -1522,30 +1597,48 @@ def main():
             
             sp_viz = st.selectbox("View", ["Bar Chart", "Correlation Heatmap", "Scatter Plot"], key='sp_viz')
             
-            # Cell type filter for this tab
+            # Get available cell types
             avail_cts = get_unique(ortholog_df, 'cell_type')
-            sp_celltypes = st.multiselect("Cell Types (optional)", avail_cts, default=[], key='sp_ct')
             
             if sp_viz == "Bar Chart":
-                fig = create_species_bar(ortholog_df, selected_genes, sp_celltypes or None)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                with st.form(key="cross_species_bar_form"):
+                    st.markdown("**Cross-Species Expression Bar Chart**")
+                    sp_celltypes = st.multiselect("Cell Types (optional)", avail_cts, default=[], max_selections=10)
+                    submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
+                
+                if submitted:
+                    fig = safe_plot(create_species_bar, ortholog_df, selected_genes, sp_celltypes or None)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
             
             elif sp_viz == "Correlation Heatmap":
-                fig = create_correlation_heatmap(data['species_comparison'], selected_genes)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                with st.form(key="cross_species_corr_form"):
+                    st.markdown("**Cross-Species Expression Correlation**")
+                    st.caption("Shows correlation of gene expression patterns between species")
+                    submitted = st.form_submit_button("📊 Generate Heatmap", type="primary", use_container_width=True)
+                
+                if submitted:
+                    fig = safe_plot(create_correlation_heatmap, data['species_comparison'], selected_genes)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
             
             elif sp_viz == "Scatter Plot":
-                sc1, sc2, sc3 = st.columns(3)
-                avail_sp = ortholog_df['species'].unique().tolist()
-                with sc1:
-                    scatter_gene = st.selectbox("Gene", selected_genes, key='scat_gene')
-                with sc2:
-                    sp_x = st.selectbox("Species X", avail_sp, index=0, key='sp_x')
-                with sc3:
-                    other_sp = [s for s in avail_sp if s != sp_x]
-                    sp_y = st.selectbox("Species Y", other_sp, index=0 if other_sp else 0, key='sp_y')
-                fig = create_ortholog_scatter(ortholog_df, scatter_gene, sp_x, sp_y)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                with st.form(key="cross_species_scatter_form"):
+                    st.markdown("**Cross-Species Expression Scatter**")
+                    
+                    avail_sp = ortholog_df['species'].unique().tolist()
+                    sc1, sc2, sc3 = st.columns(3)
+                    with sc1:
+                        scatter_gene = st.selectbox("Gene", selected_genes)
+                    with sc2:
+                        sp_x = st.selectbox("Species X", avail_sp, index=0)
+                    with sc3:
+                        other_sp = [s for s in avail_sp if s != avail_sp[0]]
+                        sp_y = st.selectbox("Species Y", other_sp if other_sp else avail_sp, index=0)
+                    
+                    submitted = st.form_submit_button("📊 Generate Plot", type="primary", use_container_width=True)
+                
+                if submitted:
+                    fig = safe_plot(create_ortholog_scatter, ortholog_df, scatter_gene, sp_x, sp_y)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Data Table Tab

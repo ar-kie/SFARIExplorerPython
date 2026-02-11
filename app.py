@@ -259,13 +259,13 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         pivot = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
         zmin, zmax, zmid = -3, 3, 0
         cbar_title = 'Z-score'
-        colorscale = 'RdBu_r'
+        heatmap_colorscale = 'RdBu_r'
     else:
         # Use actual data range for non-scaled
         zmin, zmax = pivot.min().min(), pivot.max().max()
         zmid = (zmin + zmax) / 2
         cbar_title = 'Mean Expr' if value_col == 'mean_expr' else '% Expressing'
-        colorscale = 'Viridis'
+        heatmap_colorscale = 'Viridis'
     
     col_meta = pd.DataFrame([{'col_key': c, 'species': c.split('|')[0], 'dataset': c.split('|')[1], 
                               'cell_type': c.split('|')[2]} for c in pivot.columns]).set_index('col_key')
@@ -345,27 +345,30 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             # Get colors for each column directly
             colors = [anno_colors.get(v, '#999999') for v in vals]
             
-            # Create a colorscale that maps each position to its specific color
+            # Create annotation bar using marker colors directly
+            # Use a heatmap where each cell has a unique z-value mapped to its color
             n_cols = len(vals)
-            if n_cols == 1:
-                # Single column - just use one color
-                colorscale = [[0, colors[0]], [1, colors[0]]]
-                z_vals = [[0]]
-            else:
-                # Multiple columns - create index-based colorscale
-                # Each column gets its own color by using its index as the z-value
-                z_vals = [[i for i in range(n_cols)]]
-                colorscale = []
-                for i, c in enumerate(colors):
-                    pos = i / (n_cols - 1)
-                    colorscale.append([pos, c])
+            z_vals = [[i for i in range(n_cols)]]
+            
+            # Build colorscale: each index position maps to exact color
+            # Need to create step-wise colorscale to avoid interpolation
+            anno_colorscale = []
+            for i, c in enumerate(colors):
+                # Add color at start of segment
+                start_pos = i / n_cols
+                end_pos = (i + 1) / n_cols
+                anno_colorscale.append([start_pos, c])
+                anno_colorscale.append([end_pos - 0.0001, c])  # Tiny offset to create step
+            # Ensure we end at 1.0
+            if anno_colorscale:
+                anno_colorscale[-1][0] = 1.0
             
             fig.add_trace(go.Heatmap(
                 z=z_vals, x=labels, y=[''],
-                colorscale=colorscale,
+                colorscale=anno_colorscale if anno_colorscale else [[0, '#999'], [1, '#999']],
                 showscale=False, 
                 hoverinfo='skip',
-                zmin=0, zmax=max(n_cols-1, 1)
+                zmin=0, zmax=n_cols
             ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
@@ -374,7 +377,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
                       for j in range(mat.shape[1])] for i, gene in enumerate(mat.index)]
         
         fig.add_trace(go.Heatmap(z=mat.values, x=labels, y=mat.index.tolist(),
-                     colorscale=colorscale, zmid=zmid if scale_rows else None, zmin=zmin, zmax=zmax, showscale=not cbar_added,
+                     colorscale=heatmap_colorscale, zmid=zmid if scale_rows else None, zmin=zmin, zmax=zmax, showscale=not cbar_added,
                      colorbar=dict(title=cbar_title, thickness=12, len=0.6, tickfont=PLOT_TICK_FONT) if not cbar_added else None,
                      hovertext=hover_text, hoverinfo='text'),
                      row=hm_row, col=col_idx)

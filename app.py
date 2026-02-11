@@ -306,8 +306,8 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     
     has_anno = annotation_col and annotation_col in col_meta.columns
     fig = make_subplots(rows=2 if has_anno else 1, cols=n_splits, column_widths=col_widths,
-                       row_heights=[0.03, 0.97] if has_anno else [1.0],
-                       horizontal_spacing=0.02, vertical_spacing=0.01,
+                       row_heights=[0.02, 0.98] if has_anno else [1.0],  # Smaller annotation row
+                       horizontal_spacing=0.02, vertical_spacing=0.005,
                        subplot_titles=[str(s) for s in splits[:n_splits]] if n_splits > 1 else None,
                        shared_xaxes=True)  # Share x-axes so zoom works together
     
@@ -342,33 +342,17 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         
         if has_anno:
             vals = meta[annotation_col].tolist()
-            # Get colors for each column directly
+            # Get the color for each column based on its category value
             colors = [anno_colors.get(v, '#999999') for v in vals]
             
-            # Create annotation bar using marker colors directly
-            # Use a heatmap where each cell has a unique z-value mapped to its color
-            n_cols = len(vals)
-            z_vals = [[i for i in range(n_cols)]]
-            
-            # Build colorscale: each index position maps to exact color
-            # Need to create step-wise colorscale to avoid interpolation
-            anno_colorscale = []
-            for i, c in enumerate(colors):
-                # Add color at start of segment
-                start_pos = i / n_cols
-                end_pos = (i + 1) / n_cols
-                anno_colorscale.append([start_pos, c])
-                anno_colorscale.append([end_pos - 0.0001, c])  # Tiny offset to create step
-            # Ensure we end at 1.0
-            if anno_colorscale:
-                anno_colorscale[-1][0] = 1.0
-            
-            fig.add_trace(go.Heatmap(
-                z=z_vals, x=labels, y=[''],
-                colorscale=anno_colorscale if anno_colorscale else [[0, '#999'], [1, '#999']],
-                showscale=False, 
+            # Use Bar trace - each bar gets its own color directly
+            fig.add_trace(go.Bar(
+                x=labels,
+                y=[1] * len(labels),
+                marker=dict(color=colors),  # Direct color assignment per bar
+                showlegend=False,
                 hoverinfo='skip',
-                zmin=0, zmax=n_cols
+                width=1.0
             ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
@@ -412,16 +396,17 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     for i in range(1, n_splits + 1):
         hm_row = 2 if has_anno else 1
         if has_anno:
-            # Hide axes for annotation bar row
+            # Hide axes for annotation bar row - also hide the bar axis range
             fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
-            fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
+            fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, visible=False, 
+                           range=[0, 1], row=1, col=i)
         fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:
         for v, c in anno_colors.items():
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=12, color=c), name=str(v), showlegend=True))
-        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True)
+        fig.update_layout(legend=dict(orientation='v', y=0.5, x=-0.12, xanchor='right', title=dict(text=annotation_col.replace('_',' ').title(), font=PLOT_LEGEND_FONT), font=PLOT_LEGEND_FONT), showlegend=True, barmode='overlay')
     
     return fig
 

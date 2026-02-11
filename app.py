@@ -367,15 +367,23 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
-        # Create custom hover text - iterate in same order as mat.values columns
-        hover_text = [[f"Gene: {gene}<br>{hover_labels[j]}<br>Value: {mat.values[i,j]:.2f}" 
-                      for j in range(mat.shape[1])] for i, gene in enumerate(mat.index)]
         
-        fig.add_trace(go.Heatmap(z=mat.values, x=labels, y=mat.index.tolist(),
-                     colorscale=heatmap_colorscale, zmid=zmid if scale_rows else None, zmin=zmin, zmax=zmax, showscale=not cbar_added,
-                     colorbar=dict(title=cbar_title, thickness=12, len=0.6, tickfont=PLOT_TICK_FONT) if not cbar_added else None,
-                     hovertext=hover_text, hoverinfo='text'),
-                     row=hm_row, col=col_idx)
+        # Use hovertemplate with customdata for precise control
+        # customdata[i][j] = info for cell at row i, col j
+        customdata = [[hover_labels[j] for j in range(len(hover_labels))] for _ in mat.index]
+        
+        fig.add_trace(go.Heatmap(
+            z=mat.values, 
+            x=labels, 
+            y=mat.index.tolist(),
+            colorscale=heatmap_colorscale, 
+            zmid=zmid if scale_rows else None, 
+            zmin=zmin, zmax=zmax, 
+            showscale=not cbar_added,
+            colorbar=dict(title=cbar_title, thickness=12, len=0.6, tickfont=PLOT_TICK_FONT) if not cbar_added else None,
+            customdata=customdata,
+            hovertemplate='Gene: %{y}<br>%{customdata}<br>Value: %{z:.2f}<extra></extra>'
+        ), row=hm_row, col=col_idx)
         cbar_added = True
     
     # Dynamic sizing based on number of columns - MORE AGGRESSIVE

@@ -408,7 +408,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             # Hide axes for annotation bar row
             fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
             fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
-        fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size, color='black'), row=hm_row, col=i)
+        fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:
@@ -625,28 +625,28 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
         fig.update_layout(
             title=dict(
                 text=f"<b>{title_text}</b>",
-                font=dict(size=16*font_scale, family='Arial', color='black'),
+                font=dict(size=16*font_scale, family='Arial'),
                 x=0.5, xanchor='center'
             ),
             xaxis=dict(
-                title=dict(text='Developmental Stage', font=dict(size=13*font_scale, family='Arial', color='black')),
-                tickfont=dict(size=11*font_scale, family='Arial', color='black'),
+                title=dict(text='Developmental Stage', font=dict(size=13*font_scale, family='Arial')),
+                tickfont=dict(size=11*font_scale, family='Arial'),
                 tickangle=45,
                 side='bottom',
-                showline=True, linewidth=2, linecolor='black', mirror=True
+                showline=True, linewidth=2, linemirror=True
             ),
             yaxis=dict(
-                title=dict(text='Gene', font=dict(size=13*font_scale, family='Arial', color='black')),
-                tickfont=dict(size=10*font_scale, family='Arial', color='black'),
+                title=dict(text='Gene', font=dict(size=13*font_scale, family='Arial')),
+                tickfont=dict(size=10*font_scale, family='Arial'),
                 autorange='reversed',
-                showline=True, linewidth=2, linecolor='black', mirror=True
+                showline=True, linewidth=2, linemirror=True
             ),
             height=max(400, 50 + n_genes * 20),
             width=max(600, 150 + n_timepoints * 60),
             margin=dict(l=120, r=100, t=80, b=120),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family='Arial', color='black')
+            
+            
+            font=dict(family='Arial')
         )
         
         return fig
@@ -758,20 +758,20 @@ def create_temporal_heatmap_publication(temporal_df, genes, species, sample_type
             fig.update_layout(
                 title=dict(
                     text=f"<b>{species} {sample_disp} - Temporal Expression by Cell Type</b>",
-                    font=dict(size=16*font_scale, family='Arial', color='black'),
+                    font=dict(size=16*font_scale, family='Arial'),
                     x=0.5, xanchor='center'
                 ),
                 height=max(450, 60 + n_genes * 18),
                 width=max(800, 200 * n_panels),
                 margin=dict(l=120, r=80, t=100, b=120),
-                plot_bgcolor='white',
-                paper_bgcolor='white',
-                font=dict(family='Arial', color='black')
+                
+                
+                font=dict(family='Arial')
             )
             
             # Style subplot titles
             for annotation in fig['layout']['annotations']:
-                annotation['font'] = dict(size=11*font_scale, family='Arial', color='black')
+                annotation['font'] = dict(size=11*font_scale, family='Arial')
             
         else:
             # Single heatmap with averaged expression across cell types
@@ -797,7 +797,7 @@ def create_temporal_heatmap_publication(temporal_df, genes, species, sample_type
                 y=pivot_z.index.tolist(),
                 colorscale=colorscale,
                 zmid=0, zmin=-3, zmax=3,
-                colorbar=dict(title='Z-score', thickness=15, len=0.7, tickfont=dict(color='black'), title_font=dict(color='black')),
+                colorbar=dict(title='Z-score', thickness=15, len=0.7, tickfont=dict(), title_font=dict()),
                 hovertemplate='Gene: %{y}<br>Stage: %{x}<br>Z-score: %{z:.2f}<extra></extra>'
             ))
             
@@ -807,28 +807,28 @@ def create_temporal_heatmap_publication(temporal_df, genes, species, sample_type
             fig.update_layout(
                 title=dict(
                     text=f"<b>{species} {sample_disp} - {ct_str}</b>",
-                    font=dict(size=16*font_scale, family='Arial', color='black'),
+                    font=dict(size=16*font_scale, family='Arial'),
                     x=0.5, xanchor='center'
                 ),
                 xaxis=dict(
                     title='Developmental Stage',
                     tickangle=45,
-                    tickfont=dict(size=11*font_scale, color='black'),
-                    title_font=dict(size=13*font_scale, color='black'),
-                    showline=True, linewidth=2, linecolor='black', mirror=True
+                    tickfont=dict(size=11*font_scale),
+                    title_font=dict(size=13*font_scale),
+                    showline=True, linewidth=2, linemirror=True
                 ),
                 yaxis=dict(
                     title='Gene',
-                    tickfont=dict(size=10*font_scale, color='black'),
-                    title_font=dict(size=13*font_scale, color='black'),
+                    tickfont=dict(size=10*font_scale),
+                    title_font=dict(size=13*font_scale),
                     autorange='reversed',
-                    showline=True, linewidth=2, linecolor='black', mirror=True
+                    showline=True, linewidth=2, linemirror=True
                 ),
                 height=max(400, 50 + len(pivot_z) * 18),
                 margin=dict(l=120, r=80, t=80, b=120),
-                plot_bgcolor='white',
-                paper_bgcolor='white',
-                font=dict(family='Arial', color='black')
+                
+                
+                font=dict(family='Arial')
             )
         
         return fig
@@ -968,30 +968,28 @@ def create_species_bar(ortholog_df, genes, cell_types):
                     color_discrete_map=SPECIES_COLORS, title="<b>Cross-Species Expression</b>")
         fig.update_layout(
             height=450, 
-            title_font=dict(size=18, color='black'),
+            title_font=dict(size=18),
             xaxis=dict(
                 title='Gene',
                 tickangle=45,
-                title_font=dict(size=14, color='black'),
-                tickfont=dict(size=12, color='black'),
+                title_font=dict(size=14),
+                tickfont=dict(size=12),
                 showline=True,
                 linewidth=2,
-                linecolor='black',
+                linecolor='gray',
                 mirror=True
             ),
             yaxis=dict(
                 title='Mean Expression',
-                title_font=dict(size=14, color='black'),
-                tickfont=dict(size=12, color='black'),
+                title_font=dict(size=14),
+                tickfont=dict(size=12),
                 showline=True,
                 linewidth=2,
-                linecolor='black',
+                linecolor='gray',
                 mirror=True
             ),
-            legend=dict(orientation='h', y=1.08, x=0.5, xanchor='center', font=dict(size=12, color='black')),
-            font=dict(family="Arial, sans-serif", size=14, color='black'),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
+            legend=dict(orientation='h', y=1.08, x=0.5, xanchor='center', font=dict(size=12)),
+            font=dict(family="Arial, sans-serif", size=14),
             margin=dict(l=80, r=40, t=100, b=100)
         )
         return fig
@@ -1072,32 +1070,30 @@ def create_correlation_heatmap(species_comparison_df, genes):
         
         fig = go.Figure(go.Heatmap(z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
                                    colorscale='RdBu', zmid=0, zmin=-1, zmax=1, 
-                                   colorbar=dict(title='ρ', tickfont=dict(size=12, color='black'), title_font=dict(color='black'))))
+                                   colorbar=dict(title='ρ', tickfont=dict(size=12), title_font=dict())))
         fig.update_layout(
-            title=dict(text="<b>Cross-Species Expression Correlation</b>", font=dict(size=18, color='black'), x=0.5),
+            title=dict(text="<b>Cross-Species Expression Correlation</b>", font=dict(size=18), x=0.5),
             height=max(350, 50 + len(pivot) * 20),
             xaxis=dict(
                 tickangle=45,
-                tickfont=dict(size=12, color='black'),
-                title_font=dict(size=14, color='black'),
+                tickfont=dict(size=12),
+                title_font=dict(size=14),
                 showline=True,
                 linewidth=2,
-                linecolor='black',
+                linecolor='gray',
                 mirror=True
             ),
             yaxis=dict(
                 autorange='reversed',
-                tickfont=dict(size=12, color='black'),
-                title_font=dict(size=14, color='black'),
+                tickfont=dict(size=12),
+                title_font=dict(size=14),
                 showline=True,
                 linewidth=2,
-                linecolor='black',
+                linecolor='gray',
                 mirror=True
             ),
-            font=dict(family="Arial, sans-serif", size=14, color='black'),
-            margin=dict(l=100, r=80, t=80, b=120),
-            plot_bgcolor='white',
-            paper_bgcolor='white'
+            font=dict(family="Arial, sans-serif", size=14),
+            margin=dict(l=100, r=80, t=80, b=120)
         )
         return fig
     except Exception as e:
@@ -1135,34 +1131,32 @@ def create_ortholog_scatter(ortholog_df, gene, sp_x, sp_y):
         
         if not np.isnan(corr):
             fig.add_annotation(text=f"ρ = {corr:.3f}", x=0.95, y=0.05, xref="paper", yref="paper", 
-                              showarrow=False, font=dict(size=14, color='black'))
+                              showarrow=False, font=dict(size=14))
         
         fig.update_traces(marker=dict(size=11))
         fig.update_layout(
             height=480,
-            title_font=dict(size=18, color='black'),
+            title_font=dict(size=18),
             xaxis=dict(
                 title=f'{sp_x} Expression',
-                title_font=dict(size=14, color='black'),
-                tickfont=dict(size=12, color='black'),
+                title_font=dict(size=14),
+                tickfont=dict(size=12),
                 showline=True,
                 linewidth=2,
-                linecolor='black',
+                linecolor='gray',
                 mirror=True
             ),
             yaxis=dict(
                 title=f'{sp_y} Expression',
-                title_font=dict(size=14, color='black'),
-                tickfont=dict(size=12, color='black'),
+                title_font=dict(size=14),
+                tickfont=dict(size=12),
                 showline=True,
                 linewidth=2,
-                linecolor='black',
+                linecolor='gray',
                 mirror=True
             ),
-            legend=dict(orientation='v', y=1, x=1.02, xanchor='left', font=dict(size=12, color='black')),
-            font=dict(family="Arial, sans-serif", size=14, color='black'),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
+            legend=dict(orientation='v', y=1, x=1.02, xanchor='left', font=dict(size=12)),
+            font=dict(family="Arial, sans-serif", size=14),
             margin=dict(l=80, r=120, t=80, b=80)
         )
         return fig
@@ -1205,7 +1199,7 @@ def create_variance_change(vp_summary):
     
     fig = go.Figure(go.Bar(x=[v for v, _ in changes], y=[c for _, c in changes], marker_color=colors,
                           text=[f"{c:+.1f}%" for _, c in changes], textposition='outside'))
-    fig.update_layout(title="Change After Correction", height=350, yaxis=dict(zeroline=True, zerolinewidth=2, zerolinecolor='black'))
+    fig.update_layout(title="Change After Correction", height=350, yaxis=dict(zeroline=True, zerolinewidth=2, zerolinecolor='gray'))
     return fig
 
 # =============================================================================

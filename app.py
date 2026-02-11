@@ -325,9 +325,6 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     for idx, (mat, meta) in enumerate(zip(matrices, metas)):
         col_idx = idx + 1
         
-        # Ensure meta is aligned with matrix columns
-        meta = meta.loc[mat.columns]
-        
         # Dynamically adjust abbreviation based on total columns
         if total_cols > 80:
             ds_len, ct_len = 8, 10
@@ -338,13 +335,24 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         else:
             ds_len, ct_len = 15, 18
         
+        # Build labels and hover directly from matrix column order
+        # mat.columns are col_keys like "Human|Dataset1|Microglia"
+        col_info = []
+        for col_key in mat.columns:
+            parts = col_key.split('|')
+            if len(parts) == 3:
+                col_info.append({'species': parts[0], 'dataset': parts[1], 'cell_type': parts[2]})
+            else:
+                col_info.append({'species': '', 'dataset': col_key, 'cell_type': ''})
+        
         # Create abbreviated labels for x-axis
-        labels = [f"{abbreviate(meta['dataset'].iloc[i], ds_len)}<br>{abbreviate(meta['cell_type'].iloc[i], ct_len)}" for i in range(len(meta))]
+        labels = [f"{abbreviate(c['dataset'], ds_len)}<br>{abbreviate(c['cell_type'], ct_len)}" for c in col_info]
         # Full labels for hover
-        hover_labels = [f"{meta['species'].iloc[i]} | {meta['dataset'].iloc[i]} | {meta['cell_type'].iloc[i]}" for i in range(len(meta))]
+        hover_labels = [f"{c['species']} | {c['dataset']} | {c['cell_type']}" for c in col_info]
         
         if has_anno:
-            vals = meta[annotation_col].tolist()
+            # Get annotation values directly from col_info
+            vals = [c[annotation_col] if annotation_col in c else '' for c in col_info]
             # Get the color for each column based on its category value
             colors = [anno_colors.get(v, '#999999') for v in vals]
             
@@ -359,7 +367,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
-        # Create custom hover text
+        # Create custom hover text - iterate in same order as mat.values columns
         hover_text = [[f"Gene: {gene}<br>{hover_labels[j]}<br>Value: {mat.values[i,j]:.2f}" 
                       for j in range(mat.shape[1])] for i, gene in enumerate(mat.index)]
         

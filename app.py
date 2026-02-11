@@ -596,7 +596,17 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
         
         if df.empty:
             fig = go.Figure()
-            fig.add_annotation(text="No data for selected genes", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"No temporal data for {species} with selected genes", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            return fig
+        
+        # Check timepoints
+        timepoints = df['time_bin'].dropna().unique().tolist()
+        if len(timepoints) < 2:
+            fig = go.Figure()
+            fig.add_annotation(text=f"Need at least 2 timepoints for heatmap.<br>{species} has {len(timepoints)} timepoint(s)", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, align='center')
+            fig.update_layout(height=300)
             return fig
         
         agg = df.groupby(['gene_human', 'time_bin'])[value_col].mean().reset_index()
@@ -611,13 +621,16 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
         sorted_cols = sort_time_bins(pivot.columns.tolist())
         pivot = pivot[[c for c in sorted_cols if c in pivot.columns]]
         
-        # Z-score normalization per gene
-        means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
-        pivot_z = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
+        # Z-score normalization per gene (handle single column case)
+        if pivot.shape[1] < 2:
+            pivot_z = pivot.fillna(0)  # Can't z-score with 1 column
+        else:
+            means, stds = pivot.mean(axis=1), pivot.std(axis=1).replace(0, 1)
+            pivot_z = pivot.sub(means, axis=0).div(stds, axis=0).clip(-3, 3)
         
         # Cluster genes if requested
         gene_order = pivot_z.index.tolist()
-        if cluster_genes and len(pivot_z) > 2:
+        if cluster_genes and len(pivot_z) > 2 and pivot_z.shape[1] > 1:
             try:
                 from scipy.cluster.hierarchy import linkage, leaves_list
                 from scipy.spatial.distance import pdist
@@ -666,13 +679,13 @@ def create_temporal_heatmap(temporal_df, genes, species, sample_type, cell_type,
                 tickfont=dict(size=11*font_scale, family='Arial'),
                 tickangle=45,
                 side='bottom',
-                showline=True, linewidth=2, linemirror=True
+                showline=True, linewidth=2, linecolor="gray", mirror=True
             ),
             yaxis=dict(
                 title=dict(text='Gene', font=dict(size=13*font_scale, family='Arial')),
                 tickfont=dict(size=10*font_scale, family='Arial'),
                 autorange='reversed',
-                showline=True, linewidth=2, linemirror=True
+                showline=True, linewidth=2, linecolor="gray", mirror=True
             ),
             height=max(400, 50 + n_genes * 20),
             width=max(600, 150 + n_timepoints * 60),
@@ -719,11 +732,19 @@ def create_temporal_heatmap_publication(temporal_df, genes, species, sample_type
         
         if df.empty:
             fig = go.Figure()
-            fig.add_annotation(text="No data for selected genes/cell types", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            fig.add_annotation(text=f"No temporal data for {species} with selected genes/cell types", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
             return fig
         
         # Get sorted time bins
         sorted_cols = sort_time_bins(df['time_bin'].dropna().unique().tolist())
+        
+        if len(sorted_cols) < 2:
+            fig = go.Figure()
+            fig.add_annotation(text=f"Need at least 2 timepoints for heatmap.<br>{species} has {len(sorted_cols)} timepoint(s): {', '.join(sorted_cols) if sorted_cols else 'none'}", 
+                              x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, align='center')
+            fig.update_layout(height=300)
+            return fig
         
         if split_by_celltype and len(cell_types) > 1:
             # Create multi-panel figure
@@ -848,14 +869,14 @@ def create_temporal_heatmap_publication(temporal_df, genes, species, sample_type
                     tickangle=45,
                     tickfont=dict(size=11*font_scale),
                     title_font=dict(size=13*font_scale),
-                    showline=True, linewidth=2, linemirror=True
+                    showline=True, linewidth=2, linecolor="gray", mirror=True
                 ),
                 yaxis=dict(
                     title='Gene',
                     tickfont=dict(size=10*font_scale),
                     title_font=dict(size=13*font_scale),
                     autorange='reversed',
-                    showline=True, linewidth=2, linemirror=True
+                    showline=True, linewidth=2, linecolor="gray", mirror=True
                 ),
                 height=max(400, 50 + len(pivot_z) * 18),
                 margin=dict(l=120, r=80, t=80, b=120),

@@ -322,6 +322,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         return text[:max_len-2] + '..'
     
     cbar_added = False
+    all_tick_info = {}  # Store tick info for each subplot
     for idx, (mat, meta) in enumerate(zip(matrices, metas)):
         col_idx = idx + 1
         
@@ -345,10 +346,13 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             else:
                 col_info.append({'species': '', 'dataset': col_key, 'cell_type': ''})
         
-        # Create abbreviated labels for x-axis
-        labels = [f"{abbreviate(c['dataset'], ds_len)}<br>{abbreviate(c['cell_type'], ct_len)}" for c in col_info]
+        # Create abbreviated labels for x-axis display
+        tick_labels = [f"{abbreviate(c['dataset'], ds_len)}<br>{abbreviate(c['cell_type'], ct_len)}" for c in col_info]
         # Full labels for hover
         hover_labels = [f"{c['species']} | {c['dataset']} | {c['cell_type']}" for c in col_info]
+        
+        # Use numeric x positions to avoid duplicate label issues
+        x_positions = list(range(len(col_info)))
         
         if has_anno:
             # Get annotation values directly from col_info
@@ -358,9 +362,9 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             
             # Use Bar trace - each bar gets its own color directly
             fig.add_trace(go.Bar(
-                x=labels,
-                y=[1] * len(labels),
-                marker=dict(color=colors),  # Direct color assignment per bar
+                x=x_positions,
+                y=[1] * len(x_positions),
+                marker=dict(color=colors),
                 showlegend=False,
                 hoverinfo='skip',
                 width=1.0
@@ -374,7 +378,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         
         fig.add_trace(go.Heatmap(
             z=mat.values, 
-            x=labels, 
+            x=x_positions,
             y=mat.index.tolist(),
             colorscale=heatmap_colorscale, 
             zmid=zmid if scale_rows else None, 
@@ -384,6 +388,10 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             customdata=customdata,
             hovertemplate='Gene: %{y}<br>%{customdata}<br>Value: %{z:.2f}<extra></extra>'
         ), row=hm_row, col=col_idx)
+        
+        # Store tick info for later axis update
+        all_tick_info[col_idx] = {'positions': x_positions, 'labels': tick_labels}
+        
         cbar_added = True
     
     # Dynamic sizing based on number of columns - MORE AGGRESSIVE
@@ -419,7 +427,21 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
             fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, visible=False, 
                            range=[0, 1], row=1, col=i)
-        fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
+        
+        # Set custom tick labels for numeric x positions
+        if i in all_tick_info:
+            tick_info = all_tick_info[i]
+            fig.update_xaxes(
+                tickmode='array',
+                tickvals=tick_info['positions'],
+                ticktext=tick_info['labels'],
+                tickangle=tick_angle, 
+                tickfont=dict(size=tick_size), 
+                row=hm_row, col=i
+            )
+        else:
+            fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
+        
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:

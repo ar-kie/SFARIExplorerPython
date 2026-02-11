@@ -314,9 +314,6 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     if has_anno:
         ptype = 'species' if annotation_col == 'species' else 'cell_type' if annotation_col == 'cell_type' else 'dataset'
         anno_colors = get_color_palette(col_meta[annotation_col].unique().tolist(), ptype)
-        # Create a mapping from category to integer for heatmap
-        unique_vals = list(anno_colors.keys())
-        val_to_idx = {v: i for i, v in enumerate(unique_vals)}
     
     # Helper to abbreviate long names - more aggressive for many columns
     def abbreviate(text, max_len=20):
@@ -345,23 +342,30 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         
         if has_anno:
             vals = meta[annotation_col].tolist()
-            # Map values to indices
-            z_vals = [[val_to_idx.get(v, 0) for v in vals]]
-            # Create discrete colorscale
-            n_colors = len(unique_vals)
-            discrete_colorscale = []
-            for i, v in enumerate(unique_vals):
-                color = anno_colors.get(v, '#999')
-                discrete_colorscale.append([i/max(n_colors-1, 1), color])
-                if i < n_colors - 1:
-                    discrete_colorscale.append([(i+1)/max(n_colors-1, 1), color])
+            # Get colors for each column directly
+            colors = [anno_colors.get(v, '#999999') for v in vals]
+            
+            # Create a colorscale that maps each position to its specific color
+            n_cols = len(vals)
+            if n_cols == 1:
+                # Single column - just use one color
+                colorscale = [[0, colors[0]], [1, colors[0]]]
+                z_vals = [[0]]
+            else:
+                # Multiple columns - create index-based colorscale
+                # Each column gets its own color by using its index as the z-value
+                z_vals = [[i for i in range(n_cols)]]
+                colorscale = []
+                for i, c in enumerate(colors):
+                    pos = i / (n_cols - 1)
+                    colorscale.append([pos, c])
             
             fig.add_trace(go.Heatmap(
                 z=z_vals, x=labels, y=[''],
-                colorscale=discrete_colorscale,
+                colorscale=colorscale,
                 showscale=False, 
                 hoverinfo='skip',
-                zmin=0, zmax=max(n_colors-1, 1)
+                zmin=0, zmax=max(n_cols-1, 1)
             ), row=1, col=col_idx)
         
         hm_row = 2 if has_anno else 1
@@ -1370,56 +1374,51 @@ def main():
         if len(selected_genes) < 2:
             st.warning("⬅️ Enter at least 2 genes in the sidebar to create a heatmap")
         else:
-            st.subheader("Filters")
-            hm_c1, hm_c2, hm_c3 = st.columns(3)
-            
-            with hm_c1:
-                avail_species = get_unique(gene_filtered_df, 'species')
-                hm_species = st.multiselect("Species", avail_species, default=avail_species, key='hm_sp')
-            
-            with hm_c2:
-                if hm_species:
-                    hm_df_sp = filter_df(gene_filtered_df, species=hm_species)
-                    avail_datasets = get_unique(hm_df_sp, 'tissue')
-                else:
-                    avail_datasets = []
-                hm_datasets = st.multiselect("Dataset", avail_datasets, default=[], key='hm_ds')
-            
-            with hm_c3:
-                if hm_species:
-                    hm_df_ds = filter_df(hm_df_sp, datasets=hm_datasets or None)
-                    avail_cts = get_unique(hm_df_ds, 'cell_type')
-                else:
-                    avail_cts = []
-                hm_celltypes = st.multiselect("Cell Types", avail_cts, default=[], key='hm_ct')
-            
-            # Check for empty species
-            if not hm_species:
-                st.info("☝️ Select at least one species above")
-            else:
-                # Apply filters
-                try:
-                    hm_df = filter_df(gene_filtered_df, species=hm_species, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
-                except Exception:
-                    hm_df = gene_filtered_df[gene_filtered_df['species'].isin(hm_species)]
+            with st.form(key="heatmap_form"):
+                st.subheader("Filters")
+                hm_c1, hm_c2, hm_c3 = st.columns(3)
                 
-                if hm_df.empty:
-                    st.warning("No data for selected filters")
+                with hm_c1:
+                    avail_species = get_unique(gene_filtered_df, 'species')
+                    hm_species = st.multiselect("Species", avail_species, default=avail_species)
+                
+                with hm_c2:
+                    avail_datasets = get_unique(gene_filtered_df, 'tissue')
+                    hm_datasets = st.multiselect("Dataset (optional)", avail_datasets, default=[])
+                
+                with hm_c3:
+                    avail_cts = get_unique(gene_filtered_df, 'cell_type')
+                    hm_celltypes = st.multiselect("Cell Types (optional)", avail_cts, default=[], max_selections=20)
+                
+                st.subheader("Display Options")
+                hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
+                split_opts = ["None", "Species", "Dataset", "Cell Type"]
+                split_sel = hm_o1.selectbox("Split by", split_opts)
+                anno_sel = hm_o2.selectbox("Annotation", split_opts)
+                cluster_rows = hm_o3.checkbox("Cluster rows", value=False)
+                cluster_cols = hm_o4.checkbox("Cluster cols", value=False)
+                
+                submitted = st.form_submit_button("📊 Generate Heatmap", type="primary", use_container_width=True)
+            
+            if submitted:
+                if not hm_species:
+                    st.warning("☝️ Select at least one species")
                 else:
-                    st.subheader("Display Options")
-                    hm_o1, hm_o2, hm_o3, hm_o4 = st.columns(4)
-                    split_opts = ["None", "Species", "Dataset", "Cell Type"]
-                    split_sel = hm_o1.selectbox("Split by", split_opts, key='hm_split')
-                    anno_sel = hm_o2.selectbox("Annotation", split_opts, key='hm_anno')
-                    cluster_rows = hm_o3.checkbox("Cluster rows", value=False, key='hm_clust_r')
-                    cluster_cols = hm_o4.checkbox("Cluster cols", value=False, key='hm_clust_c')
-                    
                     split_map = {"None": None, "Species": "species", "Dataset": "dataset", "Cell Type": "cell_type"}
                     split_by = split_map.get(split_sel)
                     anno_col = split_map.get(anno_sel)
                     
-                    fig = safe_plot(create_heatmap, hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    # Apply filters
+                    try:
+                        hm_df = filter_df(gene_filtered_df, species=hm_species, datasets=hm_datasets or None, cell_types=hm_celltypes or None)
+                    except Exception:
+                        hm_df = gene_filtered_df[gene_filtered_df['species'].isin(hm_species)]
+                    
+                    if hm_df.empty:
+                        st.warning("No data for selected filters")
+                    else:
+                        fig = safe_plot(create_heatmap, hm_df, value_metric, scale_rows, split_by, anno_col, cluster_rows, cluster_cols)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     
     # --------------------------------------------------------------------------
     # Dot Plot Tab - WITH ITS OWN FILTERS

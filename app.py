@@ -318,7 +318,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
         unique_vals = list(anno_colors.keys())
         val_to_idx = {v: i for i, v in enumerate(unique_vals)}
     
-    # Helper to abbreviate long names
+    # Helper to abbreviate long names - more aggressive for many columns
     def abbreviate(text, max_len=20):
         if len(text) <= max_len:
             return text
@@ -327,8 +327,19 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     cbar_added = False
     for idx, (mat, meta) in enumerate(zip(matrices, metas)):
         col_idx = idx + 1
+        
+        # Dynamically adjust abbreviation based on total columns
+        if total_cols > 80:
+            ds_len, ct_len = 8, 10
+        elif total_cols > 50:
+            ds_len, ct_len = 10, 12
+        elif total_cols > 30:
+            ds_len, ct_len = 12, 15
+        else:
+            ds_len, ct_len = 15, 18
+        
         # Create abbreviated labels for x-axis
-        labels = [f"{abbreviate(meta['dataset'].iloc[i], 15)}<br>{abbreviate(meta['cell_type'].iloc[i], 18)}" for i in range(len(meta))]
+        labels = [f"{abbreviate(meta['dataset'].iloc[i], ds_len)}<br>{abbreviate(meta['cell_type'].iloc[i], ct_len)}" for i in range(len(meta))]
         # Full labels for hover
         hover_labels = [f"{meta['species'].iloc[i]} | {meta['dataset'].iloc[i]} | {meta['cell_type'].iloc[i]}" for i in range(len(meta))]
         
@@ -365,11 +376,29 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
                      row=hm_row, col=col_idx)
         cbar_added = True
     
-    # Dynamic sizing based on number of columns
+    # Dynamic sizing based on number of columns - MORE AGGRESSIVE
     height = max(450, 60 + len(pivot) * 18)
-    bottom_margin = 180 if total_cols > 30 else 140 if total_cols > 15 else 120
-    tick_angle = 90 if total_cols > 30 else 60 if total_cols > 15 else 45
-    tick_size = 9 if total_cols > 40 else 10 if total_cols > 20 else 11
+    
+    if total_cols > 80:
+        bottom_margin = 220
+        tick_angle = 90
+        tick_size = 6
+    elif total_cols > 50:
+        bottom_margin = 200
+        tick_angle = 90
+        tick_size = 7
+    elif total_cols > 30:
+        bottom_margin = 180
+        tick_angle = 90
+        tick_size = 8
+    elif total_cols > 15:
+        bottom_margin = 150
+        tick_angle = 75
+        tick_size = 9
+    else:
+        bottom_margin = 120
+        tick_angle = 45
+        tick_size = 10
     
     fig.update_layout(height=height, margin=dict(l=200, r=80, t=80, b=bottom_margin), showlegend=False, font=PLOT_FONT)
     
@@ -379,7 +408,7 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
             # Hide axes for annotation bar row
             fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
             fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=i)
-        fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size), row=hm_row, col=i)
+        fig.update_xaxes(tickangle=tick_angle, tickfont=dict(size=tick_size, color='black'), row=hm_row, col=i)
         fig.update_yaxes(autorange='reversed', showticklabels=(i==1), tickfont=PLOT_TICK_FONT, row=hm_row, col=i)
     
     if has_anno:

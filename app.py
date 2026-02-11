@@ -325,6 +325,9 @@ def create_heatmap(df, value_col='mean_expr', scale_rows=True, split_by=None, an
     for idx, (mat, meta) in enumerate(zip(matrices, metas)):
         col_idx = idx + 1
         
+        # Ensure meta is aligned with matrix columns
+        meta = meta.loc[mat.columns]
+        
         # Dynamically adjust abbreviation based on total columns
         if total_cols > 80:
             ds_len, ct_len = 8, 10

@@ -1,5 +1,5 @@
 """
-SFARI Gene Expression Explorer v4.1
+SFARI Gene Expression Explorer v4
 Robust version: Genes first, per-tab filters.
 """
 
@@ -144,8 +144,11 @@ TIME_BIN_ORDER = {
     'Neonatal (P0-P30)': 24, 'Juvenile (1-3mo)': 25, 'Adult (3-12mo)': 26, 'Aged (>12mo)': 27,
     # Zebrafish
     '0-24 hpf': 31, '24-48 hpf': 32, '48-72 hpf': 33, '72-120 hpf (5dpf)': 34, '>5 dpf': 35,
-    # Drosophila
-    '0-1 day': 41, '1-7 days': 42, '7-30 days': 43, '>30 days': 44,
+    # Drosophila (days post-eclosion)
+    'Day 0 (eclosion)': 41, 'Day 1': 42, 'Day 3': 43, 'Day 6': 44, 
+    'Day 9': 45, 'Day 15': 46, 'Day 30': 47, 'Day 50': 48,
+    # Fallback for raw timepoint strings
+    '0d': 41, '1d': 42, '3d': 43, '6d': 44, '9d': 45, '15d': 46, '30d': 47, '50d': 48,
 }
 
 SAMPLE_TYPE_DISPLAY = {'in_vivo': 'Brain (ex-vivo)', 'organoid': 'Organoid (in-vitro)'}

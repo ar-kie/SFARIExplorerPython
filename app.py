@@ -184,10 +184,10 @@ def get_color_palette(values, palette_type='auto'):
 def load_data(data_dir="data"):
     data = {}
     try:
-        data['expression'] = pd.read_parquet(f"{data_dir}/expression_summaries.parquet")
-        data['cellmeta'] = pd.read_parquet(f"{data_dir}/celltype_meta.parquet")
-        data['gene_map'] = pd.read_parquet(f"{data_dir}/gene_map.parquet")
-        data['risk_genes'] = pd.read_parquet(f"{data_dir}/risk_genes.parquet")
+        data['expression'] = pd.read_parquet(f"{data_dir}/expression_summaries.parquet", engine='pyarrow')
+        data['cellmeta'] = pd.read_parquet(f"{data_dir}/celltype_meta.parquet", engine='pyarrow')
+        data['gene_map'] = pd.read_parquet(f"{data_dir}/gene_map.parquet", engine='pyarrow')
+        data['risk_genes'] = pd.read_parquet(f"{data_dir}/risk_genes.parquet", engine='pyarrow')
         if 'gene-symbol' in data['risk_genes'].columns:
             data['risk_genes'] = data['risk_genes'].rename(columns={'gene-symbol': 'gene_symbol', 'gene-score': 'gene_score'})
     except Exception as e:
@@ -198,7 +198,7 @@ def load_data(data_dir="data"):
                     ('dataset_info', 'dataset_info.parquet'), ('batch_correction', 'batch_correction_info.parquet'),
                     ('summary_stats', 'summary_statistics.parquet'), ('temporal', 'temporal_expression.parquet'),
                     ('ortholog', 'ortholog_expression.parquet'), ('species_comparison', 'species_comparison.parquet')]:
-        try: data[key] = pd.read_parquet(f"{data_dir}/{fn}")
+        try: data[key] = pd.read_parquet(f"{data_dir}/{fn}", engine='pyarrow')
         except: data[key] = None
     return data
 
@@ -931,6 +931,10 @@ def create_multi_species_comparison(temporal_df, gene, cell_types, value_col='me
         for i, grp in enumerate(groups):
             g_data = df[df['group'] == grp]
             
+            # Get sorted time bins for this group
+            grp_time_bins = g_data['time_bin'].unique().tolist()
+            sorted_time_bins = sort_time_bins(grp_time_bins)
+            
             for ct in g_data['cell_type'].unique():
                 ct_data = g_data[g_data['cell_type'] == ct]
                 agg = ct_data.groupby('time_bin')[value_col].mean().reset_index()
@@ -947,7 +951,13 @@ def create_multi_species_comparison(temporal_df, gene, cell_types, value_col='me
                     line=dict(color=ct_colors.get(ct, '#999'), width=2)
                 ), row=1, col=i+1)
             
-            fig.update_xaxes(tickangle=45, row=1, col=i+1)
+            # Set categorical x-axis order for this subplot
+            fig.update_xaxes(
+                tickangle=45, 
+                categoryorder='array', 
+                categoryarray=sorted_time_bins,
+                row=1, col=i+1
+            )
         
         fig.update_layout(
             title=f"Temporal Expression of {gene.upper()} Across Species",

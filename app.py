@@ -1,5 +1,5 @@
 """
-SFARI Gene Expression Explorer v4
+SFARI Gene Expression Explorer v4.1
 Robust version: Genes first, per-tab filters.
 """
 
@@ -1532,16 +1532,24 @@ def main():
                 with tc1:
                     temp_species = st.selectbox("Species", temporal_df['species'].unique().tolist(), key='temp_sp')
                 with tc2:
-                    temp_sample_type = 'in_vivo'
-                    if temp_species == 'Human' and 'sample_type' in temporal_df.columns:
-                        st_opts = temporal_df[temporal_df['species'] == 'Human']['sample_type'].dropna().unique().tolist()
-                        if st_opts:
-                            st_display = [SAMPLE_TYPE_DISPLAY.get(s, s) for s in st_opts]
+                    temp_sample_type = None  # Default to no filter
+                    if 'sample_type' in temporal_df.columns:
+                        # Check if this species has sample_type data
+                        sp_sample_types = temporal_df[temporal_df['species'] == temp_species]['sample_type'].dropna().unique().tolist()
+                        if len(sp_sample_types) > 1:
+                            # Multiple sample types - show selector
+                            st_display = [SAMPLE_TYPE_DISPLAY.get(s, s) for s in sp_sample_types]
                             sel = st.selectbox("Sample Type", st_display, key='temp_st')
-                            temp_sample_type = st_opts[st_display.index(sel)]
+                            temp_sample_type = sp_sample_types[st_display.index(sel)]
+                        elif len(sp_sample_types) == 1:
+                            # Single sample type - use it but don't show selector
+                            temp_sample_type = sp_sample_types[0]
+                            st.caption(f"Sample type: {SAMPLE_TYPE_DISPLAY.get(temp_sample_type, temp_sample_type)}")
+                        else:
+                            st.caption("No sample type info")
                 
                 sp_df = temporal_df[temporal_df['species'] == temp_species]
-                if 'sample_type' in sp_df.columns:
+                if 'sample_type' in sp_df.columns and temp_sample_type:
                     sp_df = sp_df[sp_df['sample_type'] == temp_sample_type]
                 avail_temp_cts = sorted(sp_df['cell_type'].unique().tolist())
             else:

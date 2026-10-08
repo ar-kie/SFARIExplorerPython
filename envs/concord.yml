@@ -1,29 +1,31 @@
-# Conda environment for integrate_concord.py and the downstream Python steps
-# (replaces the former `scvi_cellassign` environment).
+# Conda environment for every Python step (pipeline, CONCORD, CELLxGENE fetcher).
 #
-#   conda env create -f environment_concord.yml
+#   conda env create -f envs/concord.yml            (or -p /path/to/env)
 #   conda activate concord
 #
-# PyTorch: install the build matching the cluster's CUDA driver if the default
-# wheel does not see the GPU, e.g.
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121
-# Optional GPU UMAP: RAPIDS cuML (then run integrate_concord.py --cuml).
+# conda provides only Python and pip; the scientific stack comes from pip in one resolution.
+# Mixing conda- and pip-installed numpy/pandas in one environment breaks imports
+# ("numpy._core.multiarray failed to import"). Versions are pinned to the set CONCORD was tested
+# with; they resolve to a single NumPy 1.26 for Linux / Python 3.11.
+#
+# PyTorch: if the default wheel does not see the GPU, reinstall the build for the cluster's CUDA, e.g.
+#   pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu121
 name: concord
 channels:
   - conda-forge
 dependencies:
   - python=3.11
   - pip
-  - numpy<2          # scikit-misc (seurat_v3 HVGs) wheels are built against NumPy 1.x
-  - pandas
-  - scipy
-  - pyarrow
-  - h5py
-  - scikit-learn
-  - scikit-misc
-  - umap-learn
   - pip:
-      - torch
+      - numpy==1.26.4
+      - pandas==2.2.3
+      - scipy==1.13.1
+      - scikit-learn==1.5.2
+      - scikit-misc==0.3.1
+      - h5py==3.12.1
+      - pyarrow==17.0.0
+      - anndata==0.10.9
+      - scanpy==1.10.4
+      - umap-learn==0.5.7
       - concord-sc==1.0.13
-      - scanpy
-      - anndata
+      - torch

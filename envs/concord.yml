@@ -1,0 +1,29 @@
+# Conda environment for integrate_concord.py and the downstream Python steps
+# (replaces the former `scvi_cellassign` environment).
+#
+#   conda env create -f environment_concord.yml
+#   conda activate concord
+#
+# PyTorch: install the build matching the cluster's CUDA driver if the default
+# wheel does not see the GPU, e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Optional GPU UMAP: RAPIDS cuML (then run integrate_concord.py --cuml).
+name: concord
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy<2          # scikit-misc (seurat_v3 HVGs) wheels are built against NumPy 1.x
+  - pandas
+  - scipy
+  - pyarrow
+  - h5py
+  - scikit-learn
+  - scikit-misc
+  - umap-learn
+  - pip:
+      - torch
+      - concord-sc==1.0.13
+      - scanpy
+      - anndata

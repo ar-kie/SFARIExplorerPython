@@ -1,0 +1,17 @@
+#!/bin/bash
+#BSUB -J sfari_prep_stage2
+#BSUB -o sfari_prep_stage2_%J.log
+#BSUB -e sfari_prep_stage2_%J.err
+#BSUB -W 12:00
+#BSUB -n 1
+#BSUB -R "rusage[mem=110000]"
+#BSUB -q premium
+#BSUB -P acc_ad-omics
+
+# Submit from the repository root:  bsub < jobs/run_prep_sfari_data_stage2.lsf
+source ~/.bashrc
+conda activate concord
+export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
+
+cd "${LS_SUBCWD:-.}"
+python pipeline/prep_sfari_data_v5.py --stage 2

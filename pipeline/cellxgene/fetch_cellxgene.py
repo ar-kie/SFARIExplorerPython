@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 from dataset_registry import SFARI_ROOT  # noqa: E402
-from ontology import classify  # noqa: E402
+from ontology import classify, classify_diseases, disease_allowed, split_disease  # noqa: E402
 from orthologs import _http_get, fetch_orthologs, ortholog_map  # noqa: E402
 from stages import format_age, parse_stage  # noqa: E402
 
@@ -130,6 +130,9 @@ def search(args):
     terms = {t['ontology_term_id']: t['label'] for ds in cand for t in ds.get('tissue', [])}
     log(f'  classifying {len(terms)} tissue terms by ontology ancestry (cached in ontology_cache.json)')
     is_cns = classify(terms, out / 'ontology_cache.json', CNS)
+    dterms = {p for ds in cand for d in ds.get('disease', []) for p in split_disease(d['ontology_term_id'])}
+    log(f'  classifying {len(dterms)} donor-condition terms (MONDO ancestry, cached in disease_cache.json)')
+    healthy = classify_diseases(dterms, out / 'disease_cache.json')
 
     rows = []
     for ds in datasets:
@@ -150,6 +153,8 @@ def search(args):
 
         assays = [a['label'] for a in ds.get('assay', [])]
         diseases = [d['label'] for d in ds.get('disease', [])]
+        dis_out = [d['label'] for d in ds.get('disease', [])
+                   if not disease_allowed(d['ontology_term_id'], healthy, args.disease_policy)]
         stages = ds.get('development_stage', [])
         parsed = [(s['label'], parse_stage(species, s['label'])) for s in stages]
         ages = [p['age'] for _, p in parsed if p['age'] is not None]
@@ -174,8 +179,8 @@ def search(args):
             reasons.append('no single-cell RNA assay')
         if ds.get('spatial'):
             reasons.append('spatial')
-        if 'normal' not in diseases and not args.include_disease:
-            reasons.append('no normal cells')
+        if len(dis_out) == len(diseases):
+            reasons.append(f'no donors allowed by disease policy ({args.disease_policy})')
         if not n_dev and not args.include_adult:
             reasons.append('no developmental stage')
         if True not in primary:
@@ -194,7 +199,7 @@ def search(args):
         if len(tissues) > len(cns) + 2:
             flags.append('multi-tissue (CNS cells kept)')
         rows.append({
-            'include': not reasons, 'reason': '; '.join(reasons), 'flags': '; '.join(flags),
+            'include': not reasons, 'reason': '; '.join(reasons), 'review_flags': '; '.join(flags),
             'species': species, 'dataset_id': ds['dataset_id'], 'dataset_version_id': ds.get('dataset_version_id'),
             'title': ds.get('title', ''), 'collection_id': ds.get('collection_id'),
             'collection_name': ds.get('collection_name', coll.get('name', '')),
@@ -204,7 +209,7 @@ def search(args):
             'sample_type': 'organoid' if tissue_types == {'organoid'} else
                            ('mixed' if 'organoid' in tissue_types else 'in_vivo'),
             'assays': '; '.join(assays), 'suspension_type': '; '.join(ds.get('suspension_type', [])),
-            'disease': '; '.join(diseases), 'n_cells': n_cells, 'n_primary_cells': n_primary,
+            'disease': '; '.join(diseases), 'disease_excluded': '; '.join(dis_out), 'n_cells': n_cells, 'n_primary_cells': n_primary,
             'n_stages': len(stages), 'n_dev_stages': n_dev,
             'age_min': min(ages) if ages else None, 'age_max': max(ages) if ages else None,
             'age_range': ('n/a (organoid: donor stage only)' if 'organoid' in tissue_types else
@@ -376,8 +381,15 @@ def prepare_one(src, dst, r, omap, args, ad, sparse):
         keep &= obs['is_primary_data'].astype(bool).to_numpy()
     if 'organism' in obs:
         keep &= (obs['organism'].astype(str) == latin).to_numpy()
-    if 'disease' in obs and not args.include_disease:
-        keep &= (obs['disease'].astype(str) == 'normal').to_numpy()
+    if args.disease_policy != 'all':
+        if 'disease_ontology_term_id' in obs:
+            ids_d = obs['disease_ontology_term_id'].astype(str)
+            healthy = classify_diseases({p for t in ids_d.unique() for p in split_disease(t)},
+                                        Path(args.out) / 'disease_cache.json')
+            allowed = {t: disease_allowed(t, healthy, args.disease_policy) for t in ids_d.unique()}
+            keep &= ids_d.map(allowed).to_numpy(bool)
+        elif 'disease' in obs:
+            keep &= (obs['disease'].astype(str) == 'normal').to_numpy()
     if 'tissue' in obs:   # keep CNS cells only (multi-tissue datasets), same rule as search
         labels = obs['tissue'].astype(str)
         ids = obs['tissue_ontology_term_id'].astype(str) if 'tissue_ontology_term_id' in obs else labels
@@ -453,7 +465,7 @@ def prepare_one(src, dst, r, omap, args, ad, sparse):
         'source': 'CZ CELLxGENE Discover', 'dataset_id': r['dataset_id'],
         'dataset_version_id': str(r.get('dataset_version_id', '')), 'collection_doi': r['collection_doi'],
         'gene_mapping': 'feature_name' if species == 'Human' else f'Ensembl Compara orthologs ({args.orthology})',
-        'cell_filters': 'primary, ' + ('all diseases' if args.include_disease else 'normal') + ', CNS tissues',
+        'cell_filters': f'primary cells, CNS tissues, donor conditions: {args.disease_policy}',
         'prepared': dt.date.today().isoformat(),
     }
     if species != 'Human':
@@ -511,14 +523,16 @@ def main():
     s.add_argument('--species', nargs='+', default=list(SPECIES), choices=list(SPECIES))
     s.add_argument('--min-cells', type=int, default=1000)
     s.add_argument('--include-adult', action='store_true', help='also datasets without developmental stages')
-    s.add_argument('--include-disease', action='store_true', help='also datasets without normal cells')
+    s.add_argument('--disease-policy', default='brain-healthy', choices=['brain-healthy', 'normal-only', 'all'],
+                   help='donor conditions allowed (default: none affecting the brain; see ontology.py)')
     s.add_argument('--include-retina', action='store_true')
     s.add_argument('--include-whole-embryo', action='store_true')
     s.set_defaults(func=search)
 
     def common(sp):
         sp.add_argument('--ids', nargs='+', help='dataset_ids (default: rows with include=True)')
-        sp.add_argument('--include-disease', action='store_true', help='keep non-normal cells in prepare')
+        sp.add_argument('--disease-policy', default='brain-healthy', choices=['brain-healthy', 'normal-only', 'all'],
+                        help='cells kept by donor condition in prepare (default: none affecting the brain)')
         sp.add_argument('--include-retina', action='store_true')
         sp.add_argument('--force', action='store_true', help='download even if disk space looks insufficient')
         sp.add_argument('--ensembl-host', default='https://www.ensembl.org',

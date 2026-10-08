@@ -1,0 +1,28 @@
+#!/bin/bash
+#BSUB -J sfari_cellxgene
+#BSUB -o sfari_cellxgene_%J.log
+#BSUB -e sfari_cellxgene_%J.err
+#BSUB -P acc_ad-omics
+#BSUB -q premium
+#BSUB -n 4
+#BSUB -R "rusage[mem=64000]"
+#BSUB -W 48:00
+#
+# Download, map orthologs, prepare and register the datasets marked include=True in
+# $SFARI_ROOT/data/cellxgene/manifest.tsv (create it first with the `search` step and review it).
+# Memory is per core (4 x 64 GB); counts are streamed, the CNS subset of the largest dataset
+# (Cao 2020, ~4 M cells in total) is held in memory while it is written.
+#
+# If compute nodes cannot reach the internet, run `search`, `download` and `orthologs` on a login
+# node (in tmux/screen) and submit this job with STEPS="prepare register".
+#
+# Submit from the repository root:  bsub < jobs/run_fetch_cellxgene.lsf
+
+source ~/.bashrc
+conda activate concord
+export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
+cd "${LS_SUBCWD:-.}"
+
+for step in ${STEPS:-download orthologs prepare register}; do
+  python pipeline/cellxgene/fetch_cellxgene.py "$step"
+done

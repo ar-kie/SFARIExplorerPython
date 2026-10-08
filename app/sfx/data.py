@@ -133,7 +133,7 @@ def load_atlas(data_dir: str | Path = "data") -> Atlas:
         absent[i] = (detection[(groups["dataset"] == ds).to_numpy()] == 0).all(axis=0)
 
     annotations = _load_annotations(d / "risk_genes.parquet")
-    datasets = _dataset_table(d / "dataset_overview.parquet", tgroups)
+    datasets = _dataset_table(d / "dataset_overview.parquet", tgroups, _references(d))
     umap = _optional(d / "umap_subsample.parquet")
     if umap is not None:
         umap = umap.rename(columns={"organism": "species", "predicted_labels": "cell_type"})
@@ -173,12 +173,22 @@ def _load_annotations(path: Path) -> pd.DataFrame:
     return df.drop_duplicates("gene").set_index("gene")
 
 
-def _dataset_table(path: Path, tgroups: pd.DataFrame) -> pd.DataFrame:
+def _references(d: Path) -> dict:
+    """Built-in references plus data/dataset_references.json (written by the CELLxGENE fetcher)."""
+    refs = dict(C.DATASET_REFS)
+    extra = d / "dataset_references.json"
+    if extra.exists():
+        for name, r in json.loads(extra.read_text()).items():
+            refs.setdefault(name, (r.get("reference", ""), r.get("doi", ""), r.get("scope", "")))
+    return refs
+
+
+def _dataset_table(path: Path, tgroups: pd.DataFrame, refs: dict) -> pd.DataFrame:
     ov = pd.read_parquet(path)
     rows = []
     for _, r in ov.iterrows():
         ds = r["Dataset"]
-        ref, doi, scope = C.DATASET_REFS.get(ds, ("", "", ""))
+        ref, doi, scope = refs.get(ds, ("", "", ""))
         t = tgroups[tgroups["dataset"] == ds]
         age = ""
         if len(t) and t["numeric_time"].notna().any():

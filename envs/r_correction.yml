@@ -1,0 +1,19 @@
+# R environment for pipeline/correct_within_org.R (voom + ComBat within species).
+#
+#   conda env create -f envs/r_correction.yml       (or -p /path/to/env)
+#
+# All Bioconductor packages below have bioconda builds for R 4.5 (checked 2026-10).
+# bioconda recommends: conda config --add channels bioconda; conda config --add channels conda-forge;
+#                      conda config --set channel_priority strict
+name: r_correction
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.5
+  - r-tidyverse
+  - bioconductor-limma
+  - bioconductor-edger
+  - bioconductor-sva
+  - bioconductor-variancepartition
+  - bioconductor-biocparallel

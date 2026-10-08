@@ -7,18 +7,18 @@
 #BSUB -gpu num=1
 #BSUB -R a100
 #BSUB -n 8
-#BSUB -R "rusage[mem=32000]"
+#BSUB -R "rusage[mem=64000]"
 #BSUB -W 24:00
 #
 # CONCORD integration + label transfer (replaces the scVI/scANVI notebook step).
-# Memory is per core (8 x 32 GB): streaming the raw counts is light, but the selected
-# features for ~6.5 M cells (raw + log-normalised) are held in memory during training.
+# Memory is per core (8 x 64 GB = 512 GB): streaming the raw counts is light, but the selected
+# features of every cell (raw + log-normalised) are held in memory during training.
 # Check the current GPU resource names on Minerva (e.g. a100, h100nvl) before submitting.
 #
 # Submit from the repository root:  bsub < jobs/run_integrate_concord.lsf
 
 source ~/.bashrc
-conda activate concord
+conda activate "${CONDA_ENV:-concord}"   # export CONDA_ENV=/path/to/env before bsub if needed
 export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
 
 cd "${LS_SUBCWD:-.}"

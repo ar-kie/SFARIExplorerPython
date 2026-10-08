@@ -79,7 +79,7 @@ bsub < jobs/run_postprocess.lsf           # pseudobulk -> metadata -> ages -> co
 | pseudobulk | `prep_sfari_data_v8.py --stage 1` | CONCORD output, `concatenated_annotated.h5ad` | `pseudobulk_counts.csv`, `pseudobulk_meta.csv`, `umap_subsample.parquet` |
 | metadata | `add_missing_metadata.py`, `create_merged_columns.py` | CONCORD output | per-cell h5ad with merged sample/time columns |
 | ages | `normalize_age.py` | `pseudobulk_meta.csv`, per-cell h5ad | `pseudobulk_meta_numeric_time.csv` |
-| correct | `correct_within_org.R` | counts + numeric-time metadata | `corrected_expression.csv` (voom, ComBat within species) |
+| correct | `correct_within_org.R` (R env: `envs/r_correction.yml`) | counts + numeric-time metadata | `corrected_expression.csv` (voom, ComBat within species) |
 | parquets | `prep_sfari_data_v5.py --stage 2` | corrected expression + metadata | `expression_summaries`, `temporal_expression`, ... (long format) |
 
 All of them read and write `$SFARI_EXCHANGE_DIR` (default `data/r_exchange`; `prep_sfari_data_v8.py` alone

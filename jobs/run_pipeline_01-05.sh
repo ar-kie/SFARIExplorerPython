@@ -7,7 +7,7 @@ SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
 export SFARI_ROOT
 OUTPUT_DIR="${SFARI_ROOT}/pipeline_output"
 LOG_DIR="${OUTPUT_DIR}/logs"
-CONDA_ENV="concord"
+CONDA_ENV="${CONDA_ENV:-concord}"   # name or path of the conda env
 QUEUE="premium"; PROJECT="acc_ad-omics"
 
 mkdir -p "${OUTPUT_DIR}" "${LOG_DIR}" "${OUTPUT_DIR}/checkpoints" "${OUTPUT_DIR}/temp"

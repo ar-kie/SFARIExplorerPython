@@ -10,7 +10,7 @@
 
 # Submit from the repository root:  bsub < jobs/run_prep_sfari_data_stage2.lsf
 source ~/.bashrc
-conda activate concord
+conda activate "${CONDA_ENV:-concord}"
 export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
 
 cd "${LS_SUBCWD:-.}"

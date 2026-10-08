@@ -41,9 +41,13 @@ cd app && streamlit run app.py
 ```bash
 cd /sc/arion/projects/ad-omics/raphael/SFARI
 git clone https://github.com/ar-kie/SFARIExplorerPython SFARIExplorer && cd SFARIExplorer
-conda env create -f envs/concord.yml       # once
+conda env create -f envs/concord.yml       # once: Python (pipeline, CONCORD, fetcher)
+conda env create -f envs/r_correction.yml  # once: R (batch correction)
 export SFARI_ROOT=/sc/arion/projects/ad-omics/raphael/SFARI   # data root (this is the default)
 ```
+
+If the environments live under a path rather than a name, export `CONDA_ENV=/path/to/concord` and
+`R_ENV=/path/to/r_correction` before submitting; the jobs pass them on.
 
 Update later with `git pull`. To push uncommitted local changes instead, use
 `bash scripts/sync_to_minerva.sh <minerva_user>`.
@@ -54,6 +58,11 @@ Update later with `git pull`. To push uncommitted local changes instead, use
 | 01–05 build | `bash jobs/run_pipeline_01-05.sh` | `pipeline_output/concatenated_annotated.h5ad` |
 | 06 integrate | `bsub < jobs/run_integrate_concord.lsf` | `data/combined_concord_label_transfer.h5ad`, `data/concord/` |
 | 07 post-process | `bsub < jobs/run_postprocess.lsf` | pseudobulk, voom + ComBat (within species), long-format parquets |
+| **01–07 in one go** | `bash jobs/run_all.sh` (needs an empty `pipeline_output/`) | all of the above, chained by job dependencies |
+
+Adding datasets changes the gene list, and step 03 caches each dataset aligned to the previous list, so a
+rebuild starts from an empty `pipeline_output/`: move the old one aside (`run_all.sh` refuses to start
+while checkpoints exist).
 
 Details, inputs and outputs per script: [docs/pipeline.md](docs/pipeline.md).
 
@@ -71,6 +80,7 @@ include them without code changes. See [pipeline/cellxgene/README.md](pipeline/c
 | `SFARI_ROOT` | `/sc/arion/projects/ad-omics/raphael/SFARI` | every pipeline script and job |
 | `SFARI_EXCHANGE_DIR` | `$SFARI_ROOT/data/r_exchange` | pseudobulk, age, R correction and parquet steps |
 | `SFARI_CELLXGENE_REGISTRY` | `$SFARI_ROOT/data/cellxgene/registry.json` | `dataset_registry.py` |
+| `CONDA_ENV`, `R_ENV` | `concord`, `r_correction` | job scripts (name or path of the conda environments) |
 
 ## Deploying the app
 

@@ -19,7 +19,7 @@
 # Submit from the repository root:  bsub < jobs/run_fetch_cellxgene.lsf
 
 source ~/.bashrc
-conda activate concord
+conda activate "${CONDA_ENV:-concord}"
 export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
 cd "${LS_SUBCWD:-.}"
 

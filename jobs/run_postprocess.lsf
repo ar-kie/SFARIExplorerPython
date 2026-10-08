@@ -1,0 +1,40 @@
+#!/bin/bash
+#BSUB -J sfari_postprocess
+#BSUB -o sfari_postprocess_%J.log
+#BSUB -e sfari_postprocess_%J.err
+#BSUB -P acc_ad-omics
+#BSUB -q premium
+#BSUB -n 4
+#BSUB -R "rusage[mem=64000]"
+#BSUB -W 48:00
+#
+# Steps after CONCORD integration (06), in the order the scripts depend on each other:
+#   pseudobulk   prep_sfari_data_v8.py --stage 1   pseudobulk_counts.csv + pseudobulk_meta.csv
+#   metadata     add_missing_metadata.py, create_merged_columns.py   per-cell metadata (organoid ages)
+#   ages         normalize_age.py                  pseudobulk_meta_numeric_time.csv
+#   correct      correct_within_org.R              voom + ComBat within species -> corrected_expression.csv
+#   parquets     prep_sfari_data_v5.py --stage 2   expression_summaries / temporal_expression parquets
+# All steps share one exchange directory (SFARI_EXCHANGE_DIR). Run a subset with e.g.
+#   STEPS="ages correct parquets" bsub < jobs/run_postprocess.lsf
+#
+# Submit from the repository root:  bsub < jobs/run_postprocess.lsf
+
+set -euo pipefail
+source ~/.bashrc
+conda activate concord
+export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
+export SFARI_EXCHANGE_DIR="${SFARI_EXCHANGE_DIR:-$SFARI_ROOT/data/r_exchange}"
+mkdir -p "$SFARI_EXCHANGE_DIR"
+cd "${LS_SUBCWD:-.}"
+
+for step in ${STEPS:-pseudobulk metadata ages correct parquets}; do
+  echo "== $step"
+  case "$step" in
+    pseudobulk) python pipeline/prep_sfari_data_v8.py --stage 1 ;;
+    metadata)   python pipeline/add_missing_metadata.py && python pipeline/create_merged_columns.py ;;
+    ages)       python pipeline/normalize_age.py ;;
+    correct)    Rscript pipeline/correct_within_org.R ;;   # R: tidyverse limma edgeR sva variancePartition BiocParallel
+    parquets)   python pipeline/prep_sfari_data_v5.py --stage 2 ;;
+    *) echo "unknown step: $step" >&2; exit 1 ;;
+  esac
+done

@@ -34,7 +34,7 @@ FULL_GENES_PATH = f'{SFARI_ROOT}/pipeline_output/concatenated_annotated_with_met
 # Output directories
 OUTPUT_DIR = f'{SFARI_ROOT}/data'
 PARQUET_DIR = f'{SFARI_ROOT}/data/parquet_v2'
-R_EXCHANGE_DIR = f'{SFARI_ROOT}/data/r_exchange'
+R_EXCHANGE_DIR = os.environ.get('SFARI_EXCHANGE_DIR', f'{SFARI_ROOT}/data/r_exchange')  # pseudobulk <-> R exchange
 
 # Column names
 SPECIES_COL = 'organism'

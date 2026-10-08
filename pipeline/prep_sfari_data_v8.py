@@ -56,7 +56,7 @@ DAVIE_META = f'{SFARI_ROOT}/data/Aerts/data/57k/annotation.tsv'
 # Output directories
 OUTPUT_DIR = f'{SFARI_ROOT}/data'
 PARQUET_DIR = f'{SFARI_ROOT}/data/parquet_v3'
-R_EXCHANGE_DIR = f'{SFARI_ROOT}/data/r_exchange_v3'
+R_EXCHANGE_DIR = os.environ.get('SFARI_EXCHANGE_DIR', f'{SFARI_ROOT}/data/r_exchange_v3')  # pseudobulk <-> R exchange
 
 # Risk genes
 RISK_GENES_CSV = os.path.join(REPO_DIR, 'resources', 'SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv')

@@ -1,326 +1,101 @@
-# 🧬 SFARI Gene Expression Explorer
+# SFARIExplorer
 
-A sophisticated, Python-based web application for exploring cross-species single-cell RNA-seq gene expression data with a focus on neurodevelopmental genes.
+Cell-type-resolved gene expression across species and development. Single-cell and single-nucleus
+RNA-seq data from human (in vivo and organoid), mouse, zebrafish and *Drosophila* are integrated,
+summarised as pseudobulk per harmonised cell type and developmental time point, and served in a
+Streamlit app.
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
+- App: https://huggingface.co/spaces/ar-kie/SFARIExplorer
+- This repository: app code, processing pipeline, Minerva (LSF) jobs. Data are not versioned here.
 
-## Features
+## Layout
 
-### 🔍 Gene Search & Filtering
-- **Multi-species support**: Human, Mouse, Zebrafish, Drosophila
-- **Flexible filtering**: By species, dataset, cell type, and timepoint
-- **Gene set presets**: Quick access to SFARI risk genes by confidence score
-- **Case-insensitive search**: Works with both human and native gene symbols
+```
+app/                    Streamlit app (deployed to the Hugging Face Space); data in app/data/ (not in git)
+pipeline/
+  cellxgene/            00  fetch developmental brain datasets from CELLxGENE Discover
+  config.py             01-05 settings (datasets, paths); merges CELLxGENE datasets from the registry
+  01..05_*.py           01-05 inspect, gene universe, concatenate, cell types, developmental stages
+  06_integrate_concord.py   CONCORD integration + label transfer (replaces scVI/scANVI)
+  prep_sfari_data_v8.py, add_missing_metadata.py, create_merged_columns.py, normalize_age.py,
+  correct_within_org.R, prep_sfari_data_v5.py     pseudobulk, ages, batch correction, parquets
+  dataset_registry.py   per-dataset settings shared by the scripts above
+jobs/                   LSF job scripts (submit from the repository root)
+envs/concord.yml        conda environment for every Python step
+resources/              SFARI Gene export (07-08-2025 release), Wang (2022) metadata
+notebooks/              original data-preparation notebook (scVI era; superseded by step 06)
+docs/pipeline.md        step-by-step details, inputs and outputs
+scripts/                fetch app data, sync the app to the Space, sync to Minerva
+```
 
-### 📊 Interactive Heatmaps
-- Row-wise Z-score scaling
-- Hierarchical clustering (rows and/or columns)
-- Multiple color scales
-- Faceting by species, dataset, or cell type
-- Downloadable expression matrices
-
-### 🔵 Dot Plots
-- Size encodes % expressing cells
-- Color encodes mean expression
-- Flexible grouping options
-
-### 📈 Temporal Dynamics (NEW)
-- **Pseudotime trajectories**: Smooth expression curves with confidence intervals
-- **Developmental time alignment**: Compare across species using conserved developmental landmarks
-- **Pseudotime heatmaps**: Gene expression patterns across developmental progression
-
-### 🔬 Cross-Species Comparison
-- Side-by-side expression comparisons
-- Ortholog-aware gene matching
-- Species-normalized developmental timing
-
-### 📋 Data Export
-- Download filtered data as CSV
-- Export expression matrices
-- Publication-ready figures
-
-## Installation
-
-### Option 1: pip install
+## Run the app locally
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/sfari-explorer.git
-cd sfari-explorer
-
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+pip install streamlit==1.50.0 -r app/requirements.txt
+bash scripts/fetch_app_data.sh            # downloads the parquet build from the Space into app/data/
+cd app && streamlit run app.py
 ```
 
-### Option 2: conda
+## On Minerva
 
 ```bash
-conda create -n sfari-explorer python=3.10
-conda activate sfari-explorer
-pip install -r requirements.txt
+cd /sc/arion/projects/ad-omics/raphael/SFARI
+git clone https://github.com/ar-kie/SFARIExplorerPython SFARIExplorer && cd SFARIExplorer
+conda env create -f envs/concord.yml       # once
+export SFARI_ROOT=/sc/arion/projects/ad-omics/raphael/SFARI   # data root (this is the default)
 ```
 
-## Quick Start
+Update later with `git pull`. To push uncommitted local changes instead, use
+`bash scripts/sync_to_minerva.sh <minerva_user>`.
 
-### 1. Prepare Your Data
+| Step | Run | Output (under `$SFARI_ROOT`) |
+|---|---|---|
+| 00 add CELLxGENE data (optional) | `python pipeline/cellxgene/fetch_cellxgene.py search`, review `manifest.tsv`, then `bsub < jobs/run_fetch_cellxgene.lsf` | `data/cellxgene/prepared/*.h5ad`, `registry.json` |
+| 01–05 build | `bash jobs/run_pipeline_01-05.sh` | `pipeline_output/concatenated_annotated.h5ad` |
+| 06 integrate | `bsub < jobs/run_integrate_concord.lsf` | `data/combined_concord_label_transfer.h5ad`, `data/concord/` |
+| 07 post-process | `bsub < jobs/run_postprocess.lsf` | pseudobulk, voom + ComBat (within species), long-format parquets |
 
-If you have h5ad files, use the data preparation script:
+Details, inputs and outputs per script: [docs/pipeline.md](docs/pipeline.md).
+
+### Adding data from CELLxGENE
+
+`pipeline/cellxgene/fetch_cellxgene.py` searches CELLxGENE Discover for developmental central-nervous-system
+datasets in the atlas species, writes a reviewable manifest, then downloads, maps genes to human orthologs,
+parses developmental stages into the pipeline's age units and registers the prepared files. Steps 01–07 then
+include them without code changes. See [pipeline/cellxgene/README.md](pipeline/cellxgene/README.md).
+
+### Environment variables
+
+| Variable | Default | Used by |
+|---|---|---|
+| `SFARI_ROOT` | `/sc/arion/projects/ad-omics/raphael/SFARI` | every pipeline script and job |
+| `SFARI_EXCHANGE_DIR` | `$SFARI_ROOT/data/r_exchange` | pseudobulk, age, R correction and parquet steps |
+| `SFARI_CELLXGENE_REGISTRY` | `$SFARI_ROOT/data/cellxgene/registry.json` | `dataset_registry.py` |
+
+## Deploying the app
+
+The Space is a separate git repository (with the parquet data in Git LFS). Copy the app code into a clone of
+it and push from there:
 
 ```bash
-# Simple usage with a single file
-python prepare_data.py \
-    --input your_data.h5ad \
-    --output ./data/ \
-    --species "Human" \
-    --cell-type-col "cell_type"
-
-# Using a configuration file (recommended for multiple datasets)
-python prepare_data.py --config config.yaml
+git clone https://huggingface.co/spaces/ar-kie/SFARIExplorer ../hf_space   # once
+bash scripts/sync_hf_space.sh ../hf_space
+cd ../hf_space && git diff && git commit -am "Update app" && git push
 ```
 
-Or if you already have parquet files from the R Shiny version, simply copy them to `./data/`:
+A new data build goes into the Space's `data/`. Add `build_info.json` (from `data/concord/`) and
+`dataset_references.json` (from `data/cellxgene/`) so the app reports the integration method and the
+references of added datasets.
 
-```bash
-mkdir -p data
-cp /path/to/your/parquet/files/*.parquet ./data/
-```
+## Known gaps
 
-### 2. Run the Application
+- The script that converts the long-format parquets (step 07) into the app's wide format
+  (`expression_mean/pct/meta`, `temporal_mean/meta`, `stage_mapping` with `relative_dev_time`) is not in this
+  repository. It was run on Minerva for the current build and should be added under `pipeline/`.
+- Steps 06–07 have not yet been run with CONCORD on the full data. Step 06 was tested end to end on
+  synthetic data.
 
-```bash
-streamlit run app.py
-```
+## Data and citation
 
-The app will open in your browser at `http://localhost:8501`
-
-## Data Format
-
-### Required Files (in `./data/` directory)
-
-| File | Description | Required Columns |
-|------|-------------|------------------|
-| `expression_summaries.parquet` | Aggregated expression data | `species`, `tissue`, `cell_type`, `gene_native`, `gene_human`, `mean_expr`, `pct_expressing`, `n_cells` |
-| `celltype_meta.parquet` | Cell type metadata | `species`, `tissue`, `cell_type` |
-| `gene_map.parquet` | Gene symbol mappings | `species`, `gene_native`, `gene_human` |
-| `risk_genes.parquet` | SFARI risk gene annotations | `gene_symbol`, `gene_score`, `gene_name` |
-
-### Optional Columns for Temporal Analysis
-
-Add these columns to `expression_summaries.parquet` for temporal visualization:
-
-| Column | Description | Example Values |
-|--------|-------------|----------------|
-| `timepoint` | Original timepoint label | "E12.5", "GW10", "24hpf" |
-| `dev_time` | Normalized developmental time (0-1) | 0.15, 0.25, 0.45 |
-| `pseudotime` | Pseudotime from trajectory inference | 0.0 - 1.0 |
-
-## Configuration
-
-### Data Preparation Config (`config.yaml`)
-
-```yaml
-output_dir: "./data"
-ortholog_map_path: "./ortholog_map.csv"  # Optional
-risk_genes_path: "./SFARI_genes.csv"
-
-datasets:
-  - path: "/path/to/human_brain.h5ad"
-    name: "Human Brain Atlas"
-    species: "Human"
-    cell_type_col: "cell_type"
-    timepoint_col: "gestational_week"
-    gene_col: "var_names"
-    layer: null  # Use .X matrix
-    timepoint_mapping:  # Optional: custom time normalization
-      "GW8": 0.11
-      "GW10": 0.15
-      "GW12": 0.19
-```
-
-### Ortholog Mapping File
-
-Create a CSV file with cross-species gene mappings:
-
-```csv
-species,gene_native,gene_human
-Mouse,Shank3,SHANK3
-Mouse,Mecp2,MECP2
-Zebrafish,shank3a,SHANK3
-Drosophila,Shank,SHANK3
-```
-
-## Project Structure
-
-```
-sfari-explorer/
-├── app.py                 # Main Streamlit application
-├── temporal.py            # Temporal dynamics module
-├── prepare_data.py        # Data preparation pipeline
-├── requirements.txt       # Python dependencies
-├── config.yaml           # Sample configuration
-├── README.md             # This file
-└── data/                 # Data directory (create this)
-    ├── expression_summaries.parquet
-    ├── celltype_meta.parquet
-    ├── gene_map.parquet
-    └── risk_genes.parquet
-```
-
-## Deployment
-
-### Local Development
-
-```bash
-streamlit run app.py --server.port 8501
-```
-
-### Streamlit Community Cloud
-
-1. Push your code to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect your repository
-4. Deploy!
-
-Note: For large datasets, consider using Streamlit's caching and data compression.
-
-### Docker
-
-```dockerfile
-FROM python:3.10-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-```
-
-```bash
-docker build -t sfari-explorer .
-docker run -p 8501:8501 -v $(pwd)/data:/app/data sfari-explorer
-```
-
-### Heroku / Railway / Render
-
-Create a `Procfile`:
-```
-web: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
-```
-
-## Migrating from R Shiny
-
-If you're migrating from the R Shiny version:
-
-1. **Copy your parquet files** - The data format is compatible:
-   ```bash
-   cp /path/to/SFARIExplorer/inst/app/data/*.parquet ./data/
-   ```
-
-2. **Column name compatibility** - The Python version expects `tissue` column (same as R version).
-
-3. **Add temporal columns** (optional) - Enhance with developmental time data for the new temporal visualization features.
-
-## Comparison: R Shiny vs Python Streamlit
-
-| Feature | R Shiny (Original) | Python Streamlit (New) |
-|---------|-------------------|------------------------|
-| Heatmap library | ComplexHeatmap | Plotly (interactive) |
-| Data loading | arrow::read_parquet | pandas/pyarrow |
-| Interactivity | Server-side | Client-side (faster) |
-| Deployment | shinyapps.io | Streamlit Cloud, Docker |
-| Temporal dynamics | ❌ Not implemented | ✅ Full support |
-| Species alignment | ❌ Not implemented | ✅ Developmental time mapping |
-| Gene set presets | ❌ Manual entry | ✅ SFARI score presets |
-| Dot plots | ❌ Not available | ✅ Interactive |
-
-## Development
-
-### Adding New Features
-
-The modular design makes it easy to extend:
-
-```python
-# Add a new visualization in app.py
-def create_my_custom_plot(df, genes):
-    # Your visualization code
-    fig = go.Figure(...)
-    return fig
-
-# Add to the tabs section
-with tab_new:
-    fig = create_my_custom_plot(filtered_df, selected_genes)
-    st.plotly_chart(fig)
-```
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-## Performance Tips
-
-1. **Data size**: For datasets >1GB, consider:
-   - Partitioned parquet files
-   - Pre-aggregating by cell type
-   - Using DuckDB for queries
-
-2. **Caching**: Streamlit's `@st.cache_data` is used for data loading
-
-3. **Lazy loading**: Consider loading only selected genes/species on demand
-
-## Troubleshooting
-
-### Common Issues
-
-**"No data to display"**
-- Check that your parquet files are in the `./data/` directory
-- Verify column names match expected format
-
-**Slow performance**
-- Reduce number of genes displayed
-- Use row/column clustering sparingly for large matrices
-- Consider pre-filtering data
-
-**Memory errors**
-- Use partitioned parquet files
-- Load data lazily by species/dataset
-
-## Citation
-
-If you use this tool in your research, please cite:
-
-```bibtex
-@software{sfari_explorer,
-  title = {SFARI Gene Expression Explorer},
-  author = {Raphael Kubler},
-  year = {2026},
-  url = {https://github.com/ar-kie/sfari-explorer}
-}
-```
-
-## Related Resources
-
-- [SFARI Gene Database](https://gene.sfari.org/)
-- [Scanpy](https://scanpy.readthedocs.io/) - Single-cell analysis in Python
-- [scVelo](https://scvelo.readthedocs.io/) - RNA velocity analysis
-- [CellxGene](https://cellxgene.cziscience.com/) - Cell atlas browser
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-- SFARI (Simons Foundation Autism Research Initiative)
-- Single-cell data contributors
-- Streamlit and Plotly teams
+Please cite the original datasets (listed in the app's Overview and Methods) and SFARI Gene
+(gene.sfari.org) when using values from this resource.

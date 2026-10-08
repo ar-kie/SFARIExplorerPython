@@ -20,7 +20,7 @@ from collections import defaultdict
 
 SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
 H5AD_PATH = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'
-OUTPUT_DIR = f'{SFARI_ROOT}/data/r_exchange'
+OUTPUT_DIR = os.environ.get('SFARI_EXCHANGE_DIR', f'{SFARI_ROOT}/data/r_exchange')  # pseudobulk <-> R exchange
 PARQUET_DIR = f'{SFARI_ROOT}/data/parquet_v2'
 
 # Cell type column in adata.obs

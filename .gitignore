@@ -1,7 +1,7 @@
 # Data and pipeline outputs never go into git (too large; they live on Minerva
 # and, for the app, on the Hugging Face Space). See scripts/fetch_app_data.sh.
 data/
-app/data/
+app/data
 pipeline_output/
 *.h5ad
 *.parquet

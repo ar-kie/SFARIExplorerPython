@@ -27,8 +27,9 @@ INPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_merged_meta.h5ad'
 OUTPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_numeric_time.h5ad'
 
 # Also update the pseudobulk metadata
-PSEUDOBULK_META = f'{SFARI_ROOT}/data/r_exchange/pseudobulk_meta.csv'
-PSEUDOBULK_META_OUT = f'{SFARI_ROOT}/data/r_exchange/pseudobulk_meta_numeric_time.csv'
+EXCHANGE_DIR = os.environ.get('SFARI_EXCHANGE_DIR', f'{SFARI_ROOT}/data/r_exchange')  # pseudobulk <-> R exchange
+PSEUDOBULK_META = f'{EXCHANGE_DIR}/pseudobulk_meta.csv'
+PSEUDOBULK_META_OUT = f'{EXCHANGE_DIR}/pseudobulk_meta_numeric_time.csv'
 
 # Organoid datasets - use organoid_age_days column instead of timepoint
 # Note: Wang (2022) has no organoid_age_days in metadata - will be excluded from time analysis

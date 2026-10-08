@@ -18,9 +18,10 @@ from collections import defaultdict
 # CONFIG
 # =============================================================================
 
-H5AD_PATH = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_label_transfer.h5ad'
-OUTPUT_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/r_exchange'
-PARQUET_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/parquet_v2'
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+H5AD_PATH = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'
+OUTPUT_DIR = f'{SFARI_ROOT}/data/r_exchange'
+PARQUET_DIR = f'{SFARI_ROOT}/data/parquet_v2'
 
 # Cell type column in adata.obs
 CELLTYPE_COL = 'predicted_labels'  # Adjust if different
@@ -29,7 +30,7 @@ CELLTYPE_COL = 'predicted_labels'  # Adjust if different
 MIN_CELLS = 10
 
 # SFARI genes to focus on (or None for all genes)
-SFARI_GENES_PATH = '/sc/arion/projects/ad-omics/raphael/SFARI/data/sfari_genes.txt'
+SFARI_GENES_PATH = f'{SFARI_ROOT}/data/sfari_genes.txt'
 
 # =============================================================================
 # TIMEPOINT EXTRACTION

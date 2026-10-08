@@ -19,13 +19,14 @@ import gc
 # CONFIG
 # =============================================================================
 
-INPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_label_transfer.h5ad'
-OUTPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_with_meta.h5ad'
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+INPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'
+OUTPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_meta.h5ad'
 
 # Metadata files
-VELMESHEV_2019_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/Velmeshev/data/meta.tsv'
-SZIRAKI_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/Cao/data/GSM6538356_RNA_cell_annotation.csv'
-DAVIE_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/Aerts/data/57k/annotation.tsv'
+VELMESHEV_2019_META = f'{SFARI_ROOT}/data/Velmeshev/data/meta.tsv'
+SZIRAKI_META = f'{SFARI_ROOT}/data/Cao/data/GSM6538356_RNA_cell_annotation.csv'
+DAVIE_META = f'{SFARI_ROOT}/data/Aerts/data/57k/annotation.tsv'
 
 # =============================================================================
 # LOAD DATA

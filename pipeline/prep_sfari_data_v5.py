@@ -26,13 +26,15 @@ import gc
 # =============================================================================
 
 # Input files
-ANNOTATED_PATH = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_label_transfer.h5ad'  # CONCORD (was scANVI)
-FULL_GENES_PATH = '/sc/arion/projects/ad-omics/raphael/SFARI/pipeline_output/concatenated_annotated_with_meta.h5ad'
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ANNOTATED_PATH = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'  # CONCORD (was scANVI)
+FULL_GENES_PATH = f'{SFARI_ROOT}/pipeline_output/concatenated_annotated_with_meta.h5ad'
 
 # Output directories
-OUTPUT_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data'
-PARQUET_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/parquet_v2'
-R_EXCHANGE_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/r_exchange'
+OUTPUT_DIR = f'{SFARI_ROOT}/data'
+PARQUET_DIR = f'{SFARI_ROOT}/data/parquet_v2'
+R_EXCHANGE_DIR = f'{SFARI_ROOT}/data/r_exchange'
 
 # Column names
 SPECIES_COL = 'organism'
@@ -42,7 +44,7 @@ SAMPLE_COL = 'merged_sample'
 TIMEPOINT_COL = 'merged_time'
 
 # Risk genes
-RISK_GENES_CSV = '/sc/arion/projects/ad-omics/raphael/SFARI/SFARI_genes/SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv'
+RISK_GENES_CSV = os.path.join(REPO_DIR, 'resources', 'SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv')
 
 # =============================================================================
 # HELPER FUNCTIONS

@@ -61,9 +61,10 @@ from scipy import sparse
 # CONFIG
 # =============================================================================
 
-INPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/pipeline_output/concatenated_annotated.h5ad'
-OUTPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_label_transfer.h5ad'
-OUTPUT_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/concord'
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+INPUT_H5AD = f'{SFARI_ROOT}/pipeline_output/concatenated_annotated.h5ad'
+OUTPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'
+OUTPUT_DIR = f'{SFARI_ROOT}/data/concord'
 
 SPECIES_COL = 'organism'
 DATASET_COL = 'dataset'
@@ -71,6 +72,10 @@ LABEL_COL = 'cell_type_supercategory'      # harmonised author labels from step 
 UNLABELED = 'Unknown'
 
 ORGANOID_DATASETS = ['He (2024)', 'Wang (2022)']
+
+# Datasets added with pipeline/cellxgene/fetch_cellxgene.py (data/cellxgene/registry.json)
+from dataset_registry import extend_dataset_maps  # noqa: E402
+extend_dataset_maps(organoid_datasets=ORGANOID_DATASETS)
 
 # =============================================================================
 # HELPERS

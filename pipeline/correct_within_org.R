@@ -27,7 +27,8 @@ suppressPackageStartupMessages({
 # CONFIG
 # =============================================================================
 
-EXCHANGE_DIR <- "/sc/arion/projects/ad-omics/raphael/SFARI/data/r_exchange"
+SFARI_ROOT <- Sys.getenv("SFARI_ROOT", "/sc/arion/projects/ad-omics/raphael/SFARI")  # override with $SFARI_ROOT
+EXCHANGE_DIR <- file.path(SFARI_ROOT, "data/r_exchange")
 N_CORES <- 8
 
 # Option: Skip batch correction for organisms where timepoint is confounded?

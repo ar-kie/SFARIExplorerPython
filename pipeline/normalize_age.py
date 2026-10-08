@@ -21,17 +21,23 @@ import anndata as ad
 # CONFIG
 # =============================================================================
 
-INPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_with_merged_meta.h5ad'
-OUTPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_with_numeric_time.h5ad'
+import os
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+INPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_merged_meta.h5ad'
+OUTPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_numeric_time.h5ad'
 
 # Also update the pseudobulk metadata
-PSEUDOBULK_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/r_exchange/pseudobulk_meta.csv'
-PSEUDOBULK_META_OUT = '/sc/arion/projects/ad-omics/raphael/SFARI/data/r_exchange/pseudobulk_meta_numeric_time.csv'
+PSEUDOBULK_META = f'{SFARI_ROOT}/data/r_exchange/pseudobulk_meta.csv'
+PSEUDOBULK_META_OUT = f'{SFARI_ROOT}/data/r_exchange/pseudobulk_meta_numeric_time.csv'
 
 # Organoid datasets - use organoid_age_days column instead of timepoint
 # Note: Wang (2022) has no organoid_age_days in metadata - will be excluded from time analysis
 ORGANOID_DATASETS = ['He (2024)', 'Wang (2022)']
 ORGANOID_DATASETS_WITH_TIME = ['He (2024)']  # Only He has organoid_age_days
+
+# Datasets added with pipeline/cellxgene/fetch_cellxgene.py (data/cellxgene/registry.json)
+from dataset_registry import extend_dataset_maps, parse_tagged_age
+extend_dataset_maps(organoid_datasets=ORGANOID_DATASETS)
 
 # Mouse disease models to exclude (unknown age, not relevant)
 MOUSE_DISEASE_MODELS = ['APOE4/TREM2', '5xFAD']
@@ -234,6 +240,10 @@ def parse_drosophila_time(timepoint):
 
 def normalize_time(timepoint, organism, dataset=None):
     """Dispatch to appropriate parser based on organism."""
+    # Ages already computed from ontology terms (CELLxGENE datasets), e.g. "98 dpc", "16 hpf"
+    tagged = parse_tagged_age(timepoint)
+    if tagged is not None:
+        return tagged
     if organism == 'Human':
         return parse_human_time(timepoint, dataset)
     elif organism == 'Mouse':

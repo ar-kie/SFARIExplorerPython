@@ -12,14 +12,16 @@ import gc
 # =============================================================================
 
 # Source: CONCORD output of integrate_concord.py (predicted_labels, X_concord, X_umap; selected features only)
-annotated_path = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_label_transfer.h5ad'
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+annotated_path = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'
 
 # Target: full gene file (has all genes but no annotations)
-full_genes_path = '/sc/arion/projects/ad-omics/raphael/SFARI/pipeline_output/concatenated_annotated.h5ad'
+full_genes_path = f'{SFARI_ROOT}/pipeline_output/concatenated_annotated.h5ad'
 
 # Output
-output_h5ad = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_annotated_full_concord_labels.h5ad'
-output_parquet_dir = '/sc/arion/projects/ad-omics/raphael/SFARI/data/parquet/'
+output_h5ad = f'{SFARI_ROOT}/data/combined_annotated_full_concord_labels.h5ad'
+output_parquet_dir = f'{SFARI_ROOT}/data/parquet/'
 
 # Parquet config
 SPECIES_COL = "organism"
@@ -27,7 +29,7 @@ DATASET_COL = "dataset"
 CELLTYPE_COL = "predicted_labels"  # Use predicted labels, or 'supercategories' for original
 LAYER = None  # Use .X
 
-RISK_GENES_CSV = "/sc/arion/projects/ad-omics/raphael/SFARI/SFARI_genes/SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv"
+RISK_GENES_CSV = os.path.join(REPO_DIR, 'resources', 'SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv')
 
 # =============================================================================
 # STEP 1: Load annotated file (CONCORD processed)

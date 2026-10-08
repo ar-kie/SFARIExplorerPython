@@ -1,9 +1,10 @@
 """SFARI Pipeline Configuration (V4) - TRUE OUTER JOIN"""
 import os
 
-DATA_DIR = "/sc/arion/projects/ad-omics/raphael/SFARI/data"
-GENE_MAP_DIR = "/sc/arion/projects/ad-omics/raphael/SFARI/gene_maps"
-OUTPUT_DIR = "/sc/arion/projects/ad-omics/raphael/SFARI/pipeline_output"
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+DATA_DIR = f"{SFARI_ROOT}/data"
+GENE_MAP_DIR = f"{SFARI_ROOT}/gene_maps"
+OUTPUT_DIR = f"{SFARI_ROOT}/pipeline_output"
 CHECKPOINT_DIR = f"{OUTPUT_DIR}/checkpoints"
 TEMP_DIR = f"{OUTPUT_DIR}/temp"
 LOG_DIR = f"{OUTPUT_DIR}/logs"
@@ -78,6 +79,10 @@ EXTERNAL_METADATA = {
     "Velmeshev-2019": {"path": f"{DATA_DIR}/Velmeshev/data/meta.tsv", "sep": "\t", "barcode_col": "cell", "celltype_col": "cluster", "prefix": "Velmeshev-2019"},
     "Sziraki-2023": {"path": f"{DATA_DIR}/Cao/data/GSM6538356_RNA_cell_annotation.csv", "sep": ",", "barcode_col": "sample", "celltype_col": "Main_cluster_name", "prefix": "Sziraki-2023"},
 }
+
+# Datasets added with pipeline/cellxgene/fetch_cellxgene.py (data/cellxgene/registry.json)
+from dataset_registry import extend_pipeline_config
+N_REGISTERED_DATASETS = extend_pipeline_config(SYMBOL_DATASETS, DATASET_META)
 
 CELLTYPE_COLUMNS = ["cell_type_velmeshev_2019", "cell_type_sziraki_2023", "Subclass", "cell_type", "CellClass", "cluster_names", "subclass_label"]
 

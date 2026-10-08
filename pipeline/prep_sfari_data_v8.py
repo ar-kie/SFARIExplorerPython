@@ -43,21 +43,23 @@ from collections import defaultdict
 # Input files
 # CONCORD output (integrate_concord.py). Previously: 03182026_combined_pegasus_harmony_pred_filt.h5ad.
 # If cells were QC-filtered after integration, point this to the filtered file.
-FILTERED_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_label_transfer.h5ad'
-FULL_GENES_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/pipeline_output/concatenated_annotated.h5ad'
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FILTERED_H5AD = f'{SFARI_ROOT}/data/combined_concord_label_transfer.h5ad'
+FULL_GENES_H5AD = f'{SFARI_ROOT}/pipeline_output/concatenated_annotated.h5ad'
 
 # External metadata files (for datasets that need them)
-VELMESHEV_2019_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/Velmeshev/data/meta.tsv'
-SZIRAKI_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/Cao/data/GSM6538356_RNA_cell_annotation.csv'
-DAVIE_META = '/sc/arion/projects/ad-omics/raphael/SFARI/data/Aerts/data/57k/annotation.tsv'
+VELMESHEV_2019_META = f'{SFARI_ROOT}/data/Velmeshev/data/meta.tsv'
+SZIRAKI_META = f'{SFARI_ROOT}/data/Cao/data/GSM6538356_RNA_cell_annotation.csv'
+DAVIE_META = f'{SFARI_ROOT}/data/Aerts/data/57k/annotation.tsv'
 
 # Output directories
-OUTPUT_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data'
-PARQUET_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/parquet_v3'
-R_EXCHANGE_DIR = '/sc/arion/projects/ad-omics/raphael/SFARI/data/r_exchange_v3'
+OUTPUT_DIR = f'{SFARI_ROOT}/data'
+PARQUET_DIR = f'{SFARI_ROOT}/data/parquet_v3'
+R_EXCHANGE_DIR = f'{SFARI_ROOT}/data/r_exchange_v3'
 
 # Risk genes
-RISK_GENES_CSV = '/sc/arion/projects/ad-omics/raphael/SFARI/SFARI_genes/SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv'
+RISK_GENES_CSV = os.path.join(REPO_DIR, 'resources', 'SFARI-Gene_genes_07-08-2025release_10-08-2025export.csv')
 
 # Column names
 SPECIES_COL = 'organism'
@@ -111,6 +113,10 @@ DATASET_TIME_COL = {
     'Raj (2020)': 'meta_timepoint',
     'Davie (2018)': 'meta_timepoint',
 }
+
+# Datasets added with pipeline/cellxgene/fetch_cellxgene.py (data/cellxgene/registry.json)
+from dataset_registry import extend_dataset_maps
+extend_dataset_maps(DATASET_SAMPLE_COL, DATASET_TIME_COL, ORGANOID_DATASETS)
 
 # =============================================================================
 # HELPER FUNCTIONS

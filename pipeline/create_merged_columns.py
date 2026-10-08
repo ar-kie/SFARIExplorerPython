@@ -12,8 +12,10 @@ import gc
 # CONFIG
 # =============================================================================
 
-INPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_with_meta.h5ad'
-OUTPUT_H5AD = '/sc/arion/projects/ad-omics/raphael/SFARI/data/combined_concord_with_merged_meta.h5ad'
+import os
+SFARI_ROOT = os.environ.get('SFARI_ROOT', '/sc/arion/projects/ad-omics/raphael/SFARI')  # data root; override with $SFARI_ROOT
+INPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_meta.h5ad'
+OUTPUT_H5AD = f'{SFARI_ROOT}/data/combined_concord_with_merged_meta.h5ad'
 
 DATASET_COL = 'dataset'
 
@@ -82,6 +84,10 @@ dataset_time_col = {
     # Drosophila
     'Davie (2018)': '_parse_barcode_time',  # Special: parse from barcode
 }
+
+# Datasets added with pipeline/cellxgene/fetch_cellxgene.py (data/cellxgene/registry.json)
+from dataset_registry import extend_dataset_maps
+extend_dataset_maps(dataset_sample_col, dataset_time_col)
 
 # =============================================================================
 # HELPER FUNCTIONS FOR BARCODE PARSING

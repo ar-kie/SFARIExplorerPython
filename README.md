@@ -20,6 +20,7 @@ pipeline/
   prep_sfari_data_v8.py, add_missing_metadata.py, create_merged_columns.py, normalize_age.py,
   correct_within_org.R, prep_sfari_data_v5.py     pseudobulk, ages, batch correction, parquets
   dataset_registry.py   per-dataset settings shared by the scripts above
+  h5io.py               partial h5ad reads and streamed writes, so 01-05 never load the whole matrix
 jobs/                   LSF job scripts (submit from the repository root)
 envs/concord.yml        conda environment for every Python step
 resources/              SFARI Gene export (07-08-2025 release), Wang (2022) metadata

@@ -3,10 +3,12 @@
 Step 4: Annotate Cell Types (v4)
 - Fixed barcode extraction: Velmeshev-(2019)_BARCODE-Velmeshev-2019 → BARCODE
 - Final pattern tweaks
+- Only obs is loaded; the count matrix is copied to the output by HDF5 without being read
 """
 import os, re, numpy as np, pandas as pd, scanpy as sc
 import warnings; warnings.filterwarnings('ignore')
 from config import *
+import h5io
 
 STEP_NAME = "04_annotate_celltypes"
 
@@ -246,7 +248,7 @@ def main():
     print("="*60)
     
     print(f"\nLoading {CONCATENATED_PATH}...")
-    adata = sc.read_h5ad(CONCATENATED_PATH)
+    adata = sc.read_h5ad(CONCATENATED_PATH, backed='r')  # obs in memory, X stays on disk
     print(f"Shape: {adata.shape}")
     
     print(f"\nDatasets:")
@@ -298,7 +300,8 @@ def main():
             adata.obs[c] = adata.obs[c].fillna('').astype(str).astype('category')
     
     print(f"\n  Saving to {ANNOTATED_PATH}...")
-    adata.write(ANNOTATED_PATH)
+    adata.file.close()
+    h5io.write_with_obs(CONCATENATED_PATH, ANNOTATED_PATH, adata.obs)
     
     mark_checkpoint(STEP_NAME)
     print(f"\n✓ Done: {ANNOTATED_PATH}")

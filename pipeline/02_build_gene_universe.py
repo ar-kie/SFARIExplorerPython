@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Step 2: Build Gene Universe (V4) - TRUE OUTER JOIN with minimal filtering"""
-import os, re, json, numpy as np, pandas as pd, anndata as ad
+"""Step 2: Build Gene Universe (V4) - TRUE OUTER JOIN with minimal filtering
+
+Reads only gene names and cell counts (.var / .raw.var and the obs index), never the matrices.
+"""
+import os, re, json, h5py, numpy as np, pandas as pd, anndata as ad
 from collections import defaultdict
 import warnings; warnings.filterwarnings('ignore')
 from config import *
+import h5io
 
 STEP_NAME = "02_build_gene_universe"
 
@@ -15,21 +19,26 @@ def load_gene_map(name):
 
 def strip_ver(s): return re.sub(r"\.\d+$", "", str(s))
 
+def read_names(path, src, layer_override=None):
+    """(gene names, n_cells, used_raw). Picks .var or .raw.var as step 03 picks the matrix: an existing
+    override layer uses .var, otherwise .raw when the source mentions raw and the file has it."""
+    with h5py.File(path, "r") as f:
+        if not h5io.is_legacy(f):
+            use_raw = (not (layer_override and layer_override in h5io.layer_names(f))
+                       and "raw" in src and h5io.has_raw(f))
+            return h5io.var_names(f, raw=use_raw), h5io.n_obs(f), use_raw
+    adata = ad.read_h5ad(path, backed='r')
+    use_raw = not (layer_override and layer_override in adata.layers) and "raw" in src and adata.raw is not None
+    vn = (adata.raw.var_names if use_raw else adata.var_names).astype(str)
+    n = adata.n_obs; adata.file.close()
+    return vn, n, use_raw
+
 def get_genes_symbol(path, name, src):
     print(f"  {name} (Symbol)...")
-    adata = ad.read_h5ad(path, backed='r')
-    # Check for layer override
-    layer_override = DATASET_LAYER_OVERRIDE.get(name)
-    if layer_override and layer_override in adata.layers:
-        vn = adata.var_names
-    elif "raw" in src and adata.raw:
-        vn = adata.raw.var_names
-    else:
-        vn = adata.var_names
+    vn, n, _ = read_names(path, src, DATASET_LAYER_OVERRIDE.get(name))
     seen, out = set(), []
-    for g in vn.astype(str):
+    for g in vn:
         if g not in seen: seen.add(g); out.append(g)
-    n = adata.n_obs; adata.file.close()
     print(f"    {n:,} cells, {len(out):,} genes")
     return out, n
 
@@ -39,22 +48,19 @@ def get_genes_ensembl(path, name, src):
     if not gm: 
         print(f"    WARNING: No gene map found!")
         return [], 0
-    adata = ad.read_h5ad(path, backed='r')
-    if "raw" in src and adata.raw:
-        vn = adata.raw.var_names
+    vn, n, used_raw = read_names(path, src)
+    if used_raw:
         print(f"    Using .raw.var_names ({len(vn)} genes)")
     else:
-        vn = adata.var_names
         print(f"    Using .var_names ({len(vn)} genes)")
     seen, out, mapped, unmapped = set(), [], 0, 0
-    for eid in vn.astype(str):
+    for eid in vn:
         sym = gm.get(strip_ver(eid))
         if sym and pd.notna(sym) and sym != '' and sym != 'nan':
             if sym not in seen: seen.add(sym); out.append(sym)
             mapped += 1
         else: 
             unmapped += 1
-    n = adata.n_obs; adata.file.close()
     print(f"    {n:,} cells, mapped={mapped:,}, unmapped={unmapped:,}, unique symbols={len(out):,}")
     return out, n
 
@@ -179,7 +185,7 @@ def main():
     print(f"\nKEPT GENES (OUTER JOIN): {len(kept):,}")
     
     # Save
-    rows = [{"gene": g, "dataset": DATASET_META.get(d,{}).get("dataset",d), "dataset_internal": d} for g in kept for d in g2d[g]]
+    rows = [{"gene": g, "dataset": DATASET_META.get(d,{}).get("dataset",d), "dataset_internal": d} for g in kept for d in sorted(g2d[g])]
     pd.DataFrame(rows).to_parquet(GENE_MANIFEST_PATH, index=False)
     print(f"\nSaved: {GENE_MANIFEST_PATH}")
     

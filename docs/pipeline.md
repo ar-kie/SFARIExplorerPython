@@ -5,13 +5,19 @@ as plain files. All paths derive from `$SFARI_ROOT` (default `/sc/arion/projects
 
 ## Steps 01–05: build the concatenated, annotated count matrix
 
-| Step | Script | Writes (in `$SFARI_ROOT/pipeline_output/`) | LSF resources (jobs/run_pipeline_01-05.sh) |
-|---|---|---|---|
-| 01 | `01_inspect_datasets.py` | `dataset_inspection.json` (where the raw counts are: `X`, `.raw.X`, layer) | 350 GB, 2 h |
-| 02 | `02_build_gene_universe.py` | `gene_manifest.parquet`, `filtered_genes.txt` | 3650 GB, 24 h |
-| 03 | `03_concatenate_datasets.py` | `concatenated_raw.h5ad` (outer join over genes) | 1100 GB, 144 h |
-| 04 | `04_annotate_celltypes.py` | `concatenated_annotated.h5ad` (`cell_type_merged`, `cell_type_supercategory`) | 1100 GB, 72 h |
-| 05 | `05_annotate_devstage.py` | `sfari_final.h5ad` (coarse developmental categories) | 1100 GB, 72 h |
+| Step | Script | Writes (in `$SFARI_ROOT/pipeline_output/`) | Reads into memory | LSF request |
+|---|---|---|---|---|
+| 01 | `01_inspect_datasets.py` | `dataset_inspection.json` (where the raw counts are: `X`, `.raw.X`, layer) | 1,000 sampled cells per matrix | 64 GB, 4 h |
+| 02 | `02_build_gene_universe.py` | `gene_manifest.parquet`, `filtered_genes.txt` | gene names and cell counts | 16 GB, 1 h |
+| 03 | `03_concatenate_datasets.py` | `concatenated_raw.h5ad` (outer join over genes) | one dataset's count matrix at a time, then the combined obs | 400 GB, 48 h |
+| 04 | `04_annotate_celltypes.py` | `concatenated_annotated.h5ad` (`cell_type_merged`, `cell_type_supercategory`) | obs | 128 GB, 24 h |
+| 05 | `05_annotate_devstage.py` | `sfari_final.h5ad` (coarse developmental categories) | obs | 128 GB, 12 h |
+
+The steps never hold the concatenated matrix in memory (`pipeline/h5io.py`): step 03 aligns each dataset to the
+gene universe on its own and then writes the cached matrices into the output one at a time; steps 04 and 05
+load obs (backed mode) and let HDF5 copy the matrix into the new file. Memory therefore scales with the
+largest single dataset (about 2.5 times its count matrix), not with the number of datasets. Files in the
+pre-0.7 h5ad format are loaded whole with anndata, as before.
 
 Each step writes a checkpoint (`pipeline_output/checkpoints/<step>.done`) and is skipped when it exists;
 step 03 also checkpoints each dataset (`dataset_<key>.done`). To redo a step or one dataset, delete its
@@ -41,7 +47,10 @@ columns to `DATASET_SAMPLE_COL` / `DATASET_TIME_COL` in `prep_sfari_data_v8.py` 
 
 ### Troubleshooting
 
-- **Out of memory**: raise `rusage[mem=...]` for the step in `jobs/run_pipeline_01-05.sh`.
+- **Out of memory** (`TERM_MEMLIMIT` in the step's `.out` log): resubmit with a larger request, e.g.
+  `MEM03=600G bash jobs/run_pipeline_01-05.sh` (variables `MEM01`–`MEM05`, wall times `W01`–`W05`). Step 03
+  resumes after the last dataset it finished. `bhist -l <job>` or the "Max Memory" line of the log shows
+  the actual peak of a finished step.
 - **No raw counts found**: check `dataset_inspection.json`; use a source file with counts in `X`, `.raw.X`
   or a layer (and `DATASET_LAYER_OVERRIDE`).
 - **Genes left as Ensembl IDs**: provide `gene_maps/<key>_gene_map.csv` with `ensembl_gene_id,symbol`.

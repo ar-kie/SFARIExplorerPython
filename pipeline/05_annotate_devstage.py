@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Step 5: Annotate Developmental Stages"""
+"""Step 5: Annotate Developmental Stages (only obs is loaded; HDF5 copies the count matrix)"""
 import os, re, numpy as np, pandas as pd, scanpy as sc
 import warnings; warnings.filterwarnings('ignore')
 from config import *
+import h5io
 
 STEP_NAME = "05_annotate_devstage"
 
@@ -30,7 +31,7 @@ def main():
     print("="*60 + "\nSTEP 5: ANNOTATE DEVELOPMENTAL STAGES\n" + "="*60)
     
     print(f"\nLoading {ANNOTATED_PATH}...")
-    adata = sc.read_h5ad(ANNOTATED_PATH)
+    adata = sc.read_h5ad(ANNOTATED_PATH, backed='r')  # obs in memory, X stays on disk
     print(f"Shape: {adata.shape}")
     
     cols = [c for c in DEVSTAGE_COLS if c in adata.obs.columns]
@@ -57,7 +58,8 @@ def main():
             adata.obs[c] = adata.obs[c].fillna('').astype(str).astype('category')
     
     print(f"\nSaving to {FINAL_PATH}...")
-    adata.write(FINAL_PATH)
+    adata.file.close()
+    h5io.write_with_obs(ANNOTATED_PATH, FINAL_PATH, adata.obs)
     mark_checkpoint(STEP_NAME)
     print(f"\n✓ PIPELINE COMPLETE")
     print(f"Final output: {FINAL_PATH}")

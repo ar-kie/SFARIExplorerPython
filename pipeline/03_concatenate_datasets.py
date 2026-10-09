@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Step 3: Concatenate (V4) - TRUE OUTER JOIN"""
-import os, gc, json, re, numpy as np, pandas as pd, anndata as ad
+"""Step 3: Concatenate (V4) - TRUE OUTER JOIN
+
+Each dataset is read one at a time (only its count matrix and obs), aligned to the gene universe and
+cached in TEMP_DIR; the cached matrices are then written into one h5ad one at a time, so memory holds
+the largest single dataset plus the combined obs, never the whole concatenated matrix.
+"""
+import os, gc, json, re, h5py, numpy as np, pandas as pd, anndata as ad
 from scipy import sparse, io as spio
 import warnings; warnings.filterwarnings('ignore')
 from config import *
+import h5io
 
 STEP_NAME = "03_concatenate"
 
@@ -14,29 +20,44 @@ def load_gene_map(name):
     if not os.path.exists(p): return None
     return dict(pd.read_csv(p).drop_duplicates(subset=["ensembl_gene_id"]).set_index("ensembl_gene_id")["symbol"])
 
+def load_source(path, src, layer_override=None):
+    """(counts, gene names, obs) of one dataset; only the chosen matrix is read.
+    Precedence: an existing override layer, then .raw.X if the source mentions raw, then the named layer, then X."""
+    with h5py.File(path, "r") as f:
+        legacy = h5io.is_legacy(f)
+        if not legacy: layers, has_raw = h5io.layer_names(f), h5io.has_raw(f)
+    if legacy:
+        print(f"    (old h5ad format: loading with anndata)")
+        adata = ad.read_h5ad(path)
+        layers, has_raw = list(adata.layers.keys()), adata.raw is not None
+    if layer_override and layer_override in layers: key, use_raw, label = f"layers/{layer_override}", False, f"layer '{layer_override}'"
+    elif "raw" in src and has_raw: key, use_raw, label = "raw/X", True, ".raw.X"
+    elif src.startswith("layers["):
+        ln = src.split("[")[1].split("]")[0]
+        key, use_raw, label = f"layers/{ln}", False, f"layer '{ln}'"
+    else: key, use_raw, label = "X", False, ".X"
+    if legacy:
+        X = adata.raw.X if key == "raw/X" else adata.X if key == "X" else adata.layers[key.split("/", 1)[1]]
+        vn = (adata.raw.var_names if use_raw else adata.var_names).astype(str)
+        return X, vn, adata.obs.copy(), label
+    with h5py.File(path, "r") as f: vn = h5io.var_names(f, raw=use_raw)
+    return h5io.read_matrix(path, key), vn, h5io.read_obs(path), label
+
+def finish(name, X, obs, oi, ni, ng):
+    """Align X to the gene universe and label obs with the dataset."""
+    Xn = h5io.remap_columns(X, oi, ni, ng)
+    m = DATASET_META.get(name, {"dataset": name, "organism": "?"})
+    obs["dataset"], obs["organism"] = m["dataset"], m["organism"]
+    obs.index = obs.index.astype(str) + f"-{name}"
+    print(f"    {Xn.shape[0]:,} cells, {len(oi):,} genes mapped")
+    return Xn, obs
+
 def process_symbol(name, path, src, g2i, ng):
     print(f"\n  {name}...")
-    adata = ad.read_h5ad(path)
-    layer_override = DATASET_LAYER_OVERRIDE.get(name)
-    needs_round = name in DATASETS_TO_ROUND or "_rounded" in src
-    
-    if layer_override and layer_override in adata.layers:
-        X, vn = adata.layers[layer_override], adata.var_names.astype(str)
-        print(f"    Using layer '{layer_override}'")
-    elif "raw" in src and adata.raw: 
-        X, vn = adata.raw.X, adata.raw.var_names.astype(str)
-        print(f"    Using .raw.X")
-    elif src.startswith("layers["): 
-        ln = src.split("[")[1].split("]")[0]
-        X, vn = adata.layers[ln], adata.var_names.astype(str)
-        print(f"    Using layer '{ln}'")
-    else: 
-        X, vn = adata.X, adata.var_names.astype(str)
-        print(f"    Using .X")
-    
-    if needs_round:
+    X, vn, obs, label = load_source(path, src, DATASET_LAYER_OVERRIDE.get(name))
+    print(f"    Using {label}")
+    if name in DATASETS_TO_ROUND or "_rounded" in src:
         print(f"    Rounding...")
-        X = X.copy() if sparse.issparse(X) else X.copy()
         if sparse.issparse(X): X.data = np.round(X.data).astype(np.float32)
         else: X = np.round(X).astype(np.float32)
     
@@ -46,18 +67,8 @@ def process_symbol(name, path, src, g2i, ng):
             seen.add(g)
             if g in g2i: oi.append(i); ni.append(g2i[g])
     
-    Xo = X[:, oi]
-    Xo = sparse.csr_matrix(Xo) if not sparse.issparse(Xo) else Xo.tocsr()
-    Xc = Xo.tocoo(); nc = np.array(ni)[Xc.col]
-    Xn = sparse.csr_matrix((Xc.data, (Xc.row, nc)), shape=(adata.n_obs, ng))
-    
-    obs = adata.obs.copy()
-    m = DATASET_META.get(name, {"dataset": name, "organism": "?"})
-    obs["dataset"], obs["organism"] = m["dataset"], m["organism"]
-    obs.index = obs.index.astype(str) + f"-{name}"
-    
-    print(f"    {adata.n_obs:,} cells, {len(oi):,} genes mapped")
-    del adata; gc.collect()
+    Xn, obs = finish(name, X, obs, oi, ni, ng)
+    del X; gc.collect()
     return Xn, obs
 
 def process_ensembl(name, path, src, g2i, ng):
@@ -65,17 +76,8 @@ def process_ensembl(name, path, src, g2i, ng):
     gm = load_gene_map(name)
     if not gm: raise FileNotFoundError(f"Gene map missing for {name}")
     
-    adata = ad.read_h5ad(path)
-    if "raw" in src and adata.raw: 
-        X, vn = adata.raw.X, adata.raw.var_names.astype(str)
-        print(f"    Using .raw.X ({len(vn)} genes)")
-    elif src.startswith("layers["): 
-        ln = src.split("[")[1].split("]")[0]
-        X, vn = adata.layers[ln], adata.var_names.astype(str)
-        print(f"    Using layer '{ln}'")
-    else: 
-        X, vn = adata.X, adata.var_names.astype(str)
-        print(f"    Using .X ({len(vn)} genes)")
+    X, vn, obs, label = load_source(path, src)
+    print(f"    Using {label} ({len(vn)} genes)")
     
     seen, oi, ni = set(), [], []
     for i, eid in enumerate(vn.values):
@@ -84,18 +86,8 @@ def process_ensembl(name, path, src, g2i, ng):
             seen.add(sym)
             if sym in g2i: oi.append(i); ni.append(g2i[sym])
     
-    Xo = X[:, oi]
-    Xo = sparse.csr_matrix(Xo) if not sparse.issparse(Xo) else Xo.tocsr()
-    Xc = Xo.tocoo(); nc = np.array(ni)[Xc.col]
-    Xn = sparse.csr_matrix((Xc.data, (Xc.row, nc)), shape=(adata.n_obs, ng))
-    
-    obs = adata.obs.copy()
-    m = DATASET_META.get(name, {"dataset": name, "organism": "?"})
-    obs["dataset"], obs["organism"] = m["dataset"], m["organism"]
-    obs.index = obs.index.astype(str) + f"-{name}"
-    
-    print(f"    {adata.n_obs:,} cells, {len(oi):,} genes mapped")
-    del adata; gc.collect()
+    Xn, obs = finish(name, X, obs, oi, ni, ng)
+    del X; gc.collect()
     return Xn, obs
 
 def load_mtx(g2i, ng):
@@ -122,9 +114,7 @@ def load_mtx(g2i, ng):
             if g in g2i: oi.append(i); ni.append(g2i[g])
     print(f"  Mapped {len(oi):,} genes to filtered list")
     
-    Xr = X[:, oi].tocoo()
-    nc = np.array(ni)[Xr.col]
-    Xm = sparse.csr_matrix((Xr.data, (Xr.row, nc)), shape=(X.shape[0], ng))
+    Xm = h5io.remap_columns(X, oi, ni, ng)
     del X; gc.collect()
     
     results = {}
@@ -244,46 +234,32 @@ def main():
             print(f"  MTX ERROR: {e}")
             import traceback; traceback.print_exc()
     
-    # Stack all
+    # Stack all: obs in memory, matrices written one at a time
     print("\n" + "="*60 + "\nSTACKING ALL DATASETS\n" + "="*60)
-    Xb, oL = [], []
+    parts, oL = [], []
     for n in all_ds:
         xp, op = f"{TEMP_DIR}/{n}_X.npz", f"{TEMP_DIR}/{n}_obs.parquet"
         if os.path.exists(xp) and os.path.exists(op): 
-            print(f"  Loading {n}...")
-            Xb.append(sparse.load_npz(xp))
+            print(f"  Loading obs of {n}...")
+            parts.append(xp)
             oL.append(pd.read_parquet(op))
         else:
             print(f"  WARNING: Missing files for {n}")
-    
-    print(f"\n  Stacking {len(Xb)} matrices...")
-    Xc = sparse.vstack(Xb, format="csr")
-    del Xb; gc.collect()
     
     print("  Concatenating obs...")
     oc = pd.concat(oL, axis=0)
     del oL; gc.collect()
     
-    print("\n  Creating AnnData...")
-    adata = ad.AnnData(
-        X=Xc, 
-        obs=oc, 
-        var=pd.DataFrame(index=pd.Index(genes, name="gene"))
-    )
-    print(f"  Shape: {adata.shape}")
-    print(f"    Cells: {adata.n_obs:,}")
-    print(f"    Genes: {adata.n_vars:,}")
-    
     # Clean obs columns for h5ad
     print("\n  Cleaning obs columns...")
-    for c in adata.obs.columns:
-        if adata.obs[c].dtype == object: 
-            adata.obs[c] = adata.obs[c].fillna('').astype(str)
-        elif adata.obs[c].dtype == bool:
-            adata.obs[c] = adata.obs[c].astype(str)
+    for c in oc.columns:
+        if oc[c].dtype == object: 
+            oc[c] = oc[c].fillna('').astype(str)
+        elif oc[c].dtype == bool:
+            oc[c] = oc[c].astype(str)
     
-    print(f"\n  Saving to {CONCATENATED_PATH}...")
-    adata.write(CONCATENATED_PATH)
+    print(f"\n  Saving {len(parts)} matrices to {CONCATENATED_PATH}...")
+    h5io.write_stacked(CONCATENATED_PATH, parts, oc, pd.DataFrame(index=pd.Index(genes, name="gene")))
     
     # Cleanup temp
     print("\n  Cleaning temp files...")
@@ -298,11 +274,11 @@ def main():
     print("CONCATENATION COMPLETE")
     print("="*60)
     print(f"Output: {CONCATENATED_PATH}")
-    print(f"Shape: {adata.shape}")
+    print(f"Shape: ({len(oc)}, {ng})")
     
     print("\nCells per dataset:")
-    for ds, c in adata.obs['dataset'].value_counts().items(): 
+    for ds, c in oc['dataset'].value_counts().items(): 
         print(f"  {ds}: {c:,}")
-    print(f"\nTOTAL: {adata.n_obs:,} cells, {adata.n_vars:,} genes")
+    print(f"\nTOTAL: {len(oc):,} cells, {ng:,} genes")
 
 if __name__ == "__main__": main()

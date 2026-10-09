@@ -65,7 +65,7 @@ accuracy per dataset), `concord_class_probabilities.parquet`, `concord_cell_anno
 otherwise (`obs['label_source']`); `--overwrite-author-labels` reproduces the scANVI behaviour.
 
 ```bash
-bsub < jobs/run_integrate_concord.lsf     # GPU node; CPU works but is slow
+bsub < jobs/run_integrate_concord.lsf     # CPU, 16 cores (GPU settings are in the file)
 ```
 
 ## Steps after integration

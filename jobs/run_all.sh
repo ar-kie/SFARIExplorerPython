@@ -1,5 +1,5 @@
 #!/bin/bash
-# Full rebuild as chained LSF jobs: steps 01-05 (build) -> 06 (CONCORD, GPU) -> post-processing
+# Full rebuild as chained LSF jobs: steps 01-05 (build) -> 06 (CONCORD, CPU) -> post-processing
 # (pseudobulk, metadata, ages, within-species correction, parquets).
 #
 #   export CONDA_ENV=/path/to/concord R_ENV=/path/to/r_correction   # if not reachable by name

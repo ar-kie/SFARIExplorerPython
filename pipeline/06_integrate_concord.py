@@ -39,9 +39,11 @@ Design choices
   * UMAP is fitted on a stratified subsample (the app only displays a subsample);
     obsm['X_umap'] is NaN for the remaining cells.
 
-Usage (Minerva, GPU node; see run_integrate_concord.lsf):
-    python integrate_concord.py
-    python integrate_concord.py --n-features 4000 --n-epochs 15 --batch-size 512
+Usage (Minerva; see jobs/run_integrate_concord.lsf, CPU by default):
+    python pipeline/06_integrate_concord.py
+    python pipeline/06_integrate_concord.py --device cpu --threads 16 --batch-size 512
+CONCORD's encoder is a single hidden layer, so CPU training is practical; on CPU a larger
+batch size (512-1024) shortens training.
 """
 
 import argparse
@@ -253,13 +255,21 @@ def main():
     p.add_argument('--cuml', action='store_true', help='use RAPIDS cuML for UMAP if available')
     p.add_argument('--chunk', type=int, default=200_000, help='rows per chunk when streaming counts')
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'],
+                   help='auto = GPU if available, else CPU')
+    p.add_argument('--threads', type=int, default=int(os.environ.get('LSB_DJOB_NUMPROC') or os.cpu_count() or 1),
+                   help='CPU threads for PyTorch (default: cores allocated by LSF)')
     args = p.parse_args()
 
     import torch
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    if args.device == 'auto':
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device('cuda:0' if args.device == 'cuda' else 'cpu')
+    torch.set_num_threads(args.threads)
     rng = np.random.default_rng(args.seed)
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
-    log(f"Device: {device}")
+    log(f"Device: {device} | PyTorch threads: {torch.get_num_threads()}")
 
     # 1. Metadata and one streaming pass over the counts ------------------------
     log(f"1. Opening {args.input} (backed)")
@@ -379,6 +389,7 @@ def main():
             'latent_dim': args.latent_dim,
             'n_epochs': args.n_epochs,
             'batch_size': args.batch_size,
+            'device': device.type,
             'label_transfer': ("the CONCORD semi-supervised classifier head (unlabelled class 'Unknown'); "
                                + ("author labels kept where available" if args.keep_author_labels
                                   else "predictions used for all cells")) if args.label_transfer else 'none',

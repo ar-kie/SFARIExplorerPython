@@ -81,6 +81,9 @@ def datasets():
     t = pd.DataFrame({"organism": obs.groupby("dataset", observed=True)["organism"].first(), "cells": n,
                       "no author label": (100 * unk).round(1).astype(str) + " %"}).sort_values(["organism", "cells"])
     missing = sorted(set(expected.values()) - set(n.index))
+    mixed = obs.groupby("dataset", observed=True)["organism"].nunique()
+    for ds in mixed[mixed > 1].index:
+        print(f"  SEVERAL SPECIES under one name: {ds} -> run fetch_cellxgene.py register, then scripts/relabel_datasets.py")
     print(t.to_string()); print(f"  total: {n.sum():,} cells in {len(n)} datasets")
     if missing: print(f"  MISSING from the final object: {missing}")
 

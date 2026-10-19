@@ -242,7 +242,8 @@ def search(args):
 
 
 def _assign_names(m):
-    """'Author (Year)' per publication; suffix b, c, ... when names collide (incl. atlas names)."""
+    """'Author (Year)' per publication; suffix b, c, ... when names collide (incl. atlas names).
+    `register` later makes them unique per dataset (unique_displays)."""
     taken = set(ATLAS_DOIS.values())
     names = {}
     for cid, g in m.groupby('collection_id', sort=False):
@@ -489,19 +490,42 @@ def prepare_one(src, dst, r, omap, args, ad, sparse):
 # register
 # =============================================================================
 
+def unique_displays(entries):
+    """One name per dataset. The manifest names datasets by publication; when a publication contributes
+    several datasets, add the species if that tells them apart, otherwise a letter in title order:
+    'Sepp (2023) human' / 'Sepp (2023) mouse', 'Smith (2021) a' / 'Smith (2021) b'."""
+    groups = {}
+    for e in entries:
+        e.setdefault('publication', e['display'])
+        groups.setdefault(e['publication'], []).append(e)
+    for pub, g in groups.items():
+        if len(g) == 1:
+            g[0]['display'] = pub
+            continue
+        multi_species = len({e['organism'] for e in g}) > 1
+        for sp in sorted({e['organism'] for e in g}, key=SPECIES_ORDER.index):
+            same = sorted((e for e in g if e['organism'] == sp), key=lambda e: (e['title'], e['dataset_id']))
+            for i, e in enumerate(same):
+                parts = ([sp.lower()] if multi_species else []) + (['abcdefghij'[i]] if len(same) > 1 else [])
+                e['display'] = f"{pub} {' '.join(parts)}"
+    return entries
+
+
 def register(args):
     out = Path(args.out)
     entries = [json.loads(p.read_text()) for p in sorted((out / 'prepared').glob('*.json'))]
-    entries = [e for e in entries if Path(e['h5ad']).exists()]
+    entries = unique_displays([e for e in entries if Path(e['h5ad']).exists()])
     registry = {'generated': dt.datetime.now().isoformat(timespec='seconds'), 'source': 'CZ CELLxGENE Discover',
                 'datasets': entries}
     (out / 'registry.json').write_text(json.dumps(registry, indent=2))
-    refs = {}
-    for e in entries:
-        refs.setdefault(e['display'], {'reference': e['reference'], 'doi': e['collection_doi'],
-                                       'scope': e['title'][:80]})
+    refs = {e['display']: {'reference': e['reference'], 'doi': e['collection_doi'], 'scope': e['title'][:80]}
+            for e in entries}
     (out / 'dataset_references.json').write_text(json.dumps(refs, indent=2))
-    log(f"Registered {len(entries)} prepared datasets ({len(refs)} publications) in {out / 'registry.json'}")
+    n_pub = len({e['publication'] for e in entries})
+    log(f"Registered {len(entries)} prepared datasets ({n_pub} publications) in {out / 'registry.json'}")
+    for e in entries:
+        if e['display'] != e['publication']:
+            log(f"  {e['key']}: '{e['display']}' ({e['title'][:60]})")
     log('Pipeline steps 01-05 now include them (pipeline/config.py). Copy dataset_references.json into the '
         "app's data/ folder to show their references.")
 

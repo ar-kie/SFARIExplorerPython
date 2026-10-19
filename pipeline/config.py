@@ -49,7 +49,7 @@ SYMBOL_DATASETS = {
     "La-Manno-2021": f"{DATA_DIR}/Linnarsson/data/07092025_linnarsson_humanized.h5ad",
     "He-2024": f"{DATA_DIR}/HNOCA/hnoca_cleanedmeta.h5ad",
     "Jin-2025": f"{DATA_DIR}/Zeng/data/07092025_zeng_humanized.h5ad",
-    "Wang-2022": f"{DATA_DIR}/Wang_2022/wang2022_annotated.h5ad",
+    # Wang-2022 (wang2022_annotated.h5ad) is left out: no developmental time points.
 }
 
 MTX_DATASETS = {

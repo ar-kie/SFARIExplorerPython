@@ -11,16 +11,19 @@ CONDA_ENV="${CONDA_ENV:-concord}"   # name or path of the conda env
 QUEUE="premium"; PROJECT="acc_ad-omics"
 
 # Memory (rusage is per core; each step runs on one core) and wall time. Override any of them, e.g.
-#   MEM03=600G bash jobs/run_all.sh
-# 01, 02  read gene names and 1,000 sampled cells per matrix, never whole matrices
-# 03      one dataset at a time: ~2.5x its count matrix (the largest, ~1.5 M cells, needs ~150 GB),
-#         then the combined obs while the matrices are written to disk one by one
-# 04, 05  obs only; HDF5 copies the count matrix to the new file without loading it
-MEM01="${MEM01:-64G}";  W01="${W01:-4:00}"
-MEM02="${MEM02:-16G}";  W02="${W02:-1:00}"
-MEM03="${MEM03:-400G}"; W03="${W03:-48:00}"
-MEM04="${MEM04:-128G}"; W04="${W04:-24:00}"
-MEM05="${MEM05:-128G}"; W05="${W05:-12:00}"
+#   MEM03=320G bash jobs/run_all.sh
+# Measured on the 14.1 M-cell build of October 2026 (peak, run time):
+# 01  1.7 GB, 6 min   gene names and 1,000 sampled cells per matrix, never whole matrices
+# 02  0.5 GB, 1 min
+# 03  191 GB, 5.1 h   one dataset at a time (~2.5x its count matrix), then the combined obs while the
+#                     matrices are written to disk one by one
+# 04  27 GB, 12 min   obs only; HDF5 copies the count matrix to the new file without loading it
+# 05  29 GB, 6 min
+MEM01="${MEM01:-8G}";   W01="${W01:-1:00}"
+MEM02="${MEM02:-4G}";   W02="${W02:-1:00}"
+MEM03="${MEM03:-256G}"; W03="${W03:-12:00}"
+MEM04="${MEM04:-64G}";  W04="${W04:-4:00}"
+MEM05="${MEM05:-64G}";  W05="${W05:-4:00}"
 
 mkdir -p "${OUTPUT_DIR}" "${LOG_DIR}" "${OUTPUT_DIR}/checkpoints" "${OUTPUT_DIR}/temp"
 

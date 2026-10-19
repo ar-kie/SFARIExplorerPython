@@ -106,6 +106,10 @@ def concord():
     a = pd.read_parquet(f"{CONCORD}/concord_cell_annotations.parquet", columns=["dataset", "label_source"])
     src = pd.crosstab(a["dataset"], a["label_source"], normalize="index").mul(100).round(1)
     print("  label source per dataset (%):"); print(src.to_string())
+    pf = f"{CONCORD}/concord_precision_filter.csv"
+    if os.path.exists(pf):
+        print(f"  precision filter ({bi.get('integration', {}).get('label_filter', '')}):")
+        print(pd.read_csv(pf).round(3).to_string(index=False))
 
 
 @guarded

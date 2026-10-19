@@ -68,10 +68,23 @@ columns to `DATASET_SAMPLE_COL` / `DATASET_TIME_COL` in `prep_sfari_data_v8.py` 
 | Output | `combined_scanvi_label_transfer.h5ad` | `combined_concord_label_transfer.h5ad` |
 
 Outputs in `data/concord/`: `concord_label_transfer_qc.csv` (held-out precision/recall per cell type,
-accuracy per dataset), `concord_class_probabilities.parquet`, `concord_cell_annotations.parquet`,
+accuracy per dataset), `concord_precision_filter.csv`, `concord_class_probabilities.parquet`, `concord_cell_annotations.parquet`,
 `gene_detection_by_species.parquet`, `concord_features.csv`, `umap_subsample.parquet`, `build_info.json`.
 `obs['predicted_labels']` keeps harmonised author labels where they exist and uses the CONCORD prediction
 otherwise (`obs['label_source']`); `--overwrite-author-labels` reproduces the scANVI behaviour.
+
+**Precision filter.** 10 % of the author-labelled cells are hidden during training. For each predicted class,
+those held-out cells are ranked by confidence, and a transferred label is kept only where the held-out
+precision at that confidence reaches `--min-precision` (default 0.9). Other transferred cells get `Unknown`
+(`label_source` = `CONCORD transfer, below precision target`) and are left out of the pseudobulk; their
+prediction stays in `obs['concord_label']`. Per-class thresholds and counts are written to
+`concord_precision_filter.csv`. The held-out cells come from labelled datasets, so for datasets without any
+author labels (Raj (2020), Davie (2018), predicted across species) the true precision is probably lower than
+the estimate.
+
+**Checkpoint.** The latent space and class outputs are saved to `data/concord/checkpoint/` right after
+training. A rerun with the same cells, dataset names, training labels, features and training parameters
+reuses them, so changing `--min-precision` or the UMAP settings does not retrain (`--retrain` forces it).
 
 ```bash
 bsub < jobs/run_integrate_concord.lsf     # CPU, 16 cores (GPU settings are in the file)

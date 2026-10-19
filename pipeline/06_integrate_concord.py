@@ -36,6 +36,10 @@ Design choices
     cells is hidden during training and used to report held-out accuracy.
   * Author labels are kept where they exist (--keep-author-labels, default); transferred
     labels fill the unlabelled cells. Provenance is stored in obs['label_source'].
+  * Precision filter: a transferred label is kept only if, among held-out cells predicted as
+    that class with at least the cell's confidence, the precision is >= --min-precision
+    (default 0.9). Other transferred cells become 'Unknown' and are left out of the pseudobulk.
+    Thresholds per class: data/concord/concord_precision_filter.csv.
   * UMAP is fitted on a stratified subsample (the app only displays a subsample);
     obsm['X_umap'] is NaN for the remaining cells.
   * The training result (latent space, class predictions) is saved to data/concord/checkpoint/
@@ -245,6 +249,49 @@ def load_checkpoint(adata, d, fingerprint):
     return meta['version'], meta['params']
 
 
+def precision_thresholds(obs, holdout, target, min_support):
+    """Per predicted class, the lowest confidence above which held-out precision reaches `target`.
+
+    Held-out cells carry author labels that were hidden during training. Those predicted as class c
+    are ranked by confidence; the threshold is the confidence of the lowest-ranked cell at which all
+    cells ranked above still reach the target precision (at least min_support cells). A class that
+    never reaches it gets an infinite threshold: none of its transferred labels is kept.
+    """
+    h = obs[holdout]
+    y_true = h[LABEL_COL].astype(str).to_numpy()
+    y_pred = h['concord_label'].astype(str).to_numpy()
+    conf = h['predicted_labels_confidence'].to_numpy()
+    rows = []
+    for c in sorted(set(obs['concord_label'].astype(str))):
+        m = y_pred == c
+        order = np.argsort(-conf[m], kind='stable')
+        correct = (y_true[m] == c)[order]
+        n = len(correct)
+        prec = np.cumsum(correct) / np.arange(1, n + 1)
+        ok = np.flatnonzero((prec >= target) & (np.arange(1, n + 1) >= min_support))
+        k = ok[-1] + 1 if len(ok) else 0
+        rows.append({'class': c, 'holdout_predicted': n,
+                     'holdout_precision': correct.mean() if n else np.nan,
+                     'confidence_threshold': conf[m][order][k - 1] if k else np.inf,
+                     'holdout_kept': k, 'precision_at_threshold': prec[k - 1] if k else np.nan})
+    return pd.DataFrame(rows)
+
+
+def apply_precision_filter(obs, thr):
+    """Transferred labels below their class threshold become UNLABELED; returns the rejected mask."""
+    t = obs['concord_label'].astype(str).map(dict(zip(thr['class'], thr['confidence_threshold'])))
+    t = t.astype(float).fillna(np.inf).to_numpy()
+    rejected = (obs['label_source'] == 'CONCORD transfer').to_numpy() & \
+               (obs['predicted_labels_confidence'].to_numpy() < t)
+    obs.loc[rejected, 'predicted_labels'] = UNLABELED
+    obs.loc[rejected, 'label_source'] = 'CONCORD transfer, below precision target'
+    transferred = obs['label_source'].astype(str).str.startswith('CONCORD transfer')
+    thr['transferred'] = thr['class'].map(obs.loc[transferred, 'concord_label'].astype(str).value_counts()).fillna(0).astype(int)
+    thr['transferred_kept'] = thr['class'].map(
+        obs.loc[transferred & ~rejected, 'concord_label'].astype(str).value_counts()).fillna(0).astype(int)
+    return rejected
+
+
 def label_transfer_qc(obs, holdout):
     """Held-out accuracy of the classifier against author labels (hidden during training)."""
     from sklearn.metrics import classification_report
@@ -296,6 +343,10 @@ def main():
                    help='fraction of labelled cells hidden during training to estimate accuracy')
     p.add_argument('--overwrite-author-labels', dest='keep_author_labels', action='store_false',
                    help='use CONCORD predictions for all cells (scANVI-style) instead of keeping author labels')
+    p.add_argument('--min-precision', type=float, default=0.9,
+                   help='keep a transferred label only where held-out precision at its confidence reaches this (0 = keep all)')
+    p.add_argument('--min-support', type=int, default=20,
+                   help='held-out cells a class threshold must rest on')
     p.add_argument('--umap-cells', type=int, default=300_000)
     p.add_argument('--cuml', action='store_true', help='use RAPIDS cuML for UMAP if available')
     p.add_argument('--chunk', type=int, default=200_000, help='rows per chunk when streaming counts')
@@ -393,10 +444,21 @@ def main():
         qc, acc = label_transfer_qc(adata.obs, holdout)
         qc.to_csv(Path(args.outdir) / 'concord_label_transfer_qc.csv')
         log(f"   Held-out accuracy (author vs CONCORD): {acc:.3f}")
+        n_rejected = 0
+        if args.min_precision > 0:
+            thr = precision_thresholds(adata.obs, holdout, args.min_precision, args.min_support)
+            n_rejected = int(apply_precision_filter(adata.obs, thr).sum())
+            thr.to_csv(Path(args.outdir) / 'concord_precision_filter.csv', index=False)
+            n_tr = int(thr['transferred'].sum())
+            log(f"   Precision filter (>= {args.min_precision:.0%}): {n_rejected:,} of {n_tr:,} transferred labels "
+                f"set to '{UNLABELED}'")
+            for _, r in thr.iterrows():
+                log(f"     {r['class'][:34]:34s} held-out precision {r['holdout_precision']:.3f}, "
+                    f"threshold {r['confidence_threshold']:.3f}, kept {r['transferred_kept']:,} / {r['transferred']:,}")
     else:
         adata.obs['predicted_labels'] = labels
         adata.obs['label_source'] = 'author'
-        acc = float('nan')
+        acc, n_rejected = float('nan'), 0
     adata.obs = adata.obs.drop(columns=['_train_label'])
 
     # 6. UMAP on a stratified subsample -------------------------------------------
@@ -451,6 +513,9 @@ def main():
                                + ("author labels kept where available" if args.keep_author_labels
                                   else "predictions used for all cells")) if args.label_transfer else 'none',
             'holdout_accuracy': None if np.isnan(acc) else round(acc, 4),
+            'label_filter': (f"transferred labels kept where held-out precision at the cell's confidence is "
+                             f">= {args.min_precision:g}; {n_rejected:,} cells set to '{UNLABELED}'")
+                            if args.label_transfer and args.min_precision > 0 else 'none',
             'umap': (f"UMAP (cosine, n_neighbors = 30, min_dist = 0.1) of the CONCORD latent space on a "
                      f"dataset-stratified subsample of {len(umap_rows):,} cells"),
         },

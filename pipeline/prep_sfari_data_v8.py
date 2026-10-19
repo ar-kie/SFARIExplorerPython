@@ -65,6 +65,7 @@ RISK_GENES_CSV = os.path.join(REPO_DIR, 'resources', 'SFARI-Gene_genes_07-08-202
 SPECIES_COL = 'organism'
 DATASET_COL = 'dataset'
 CELLTYPE_COL = 'predicted_labels'
+UNASSIGNED_LABELS = ['Unknown']   # no cell type (step 06 precision filter): not pseudobulked
 SAMPLE_COL = 'merged_sample'
 TIMEPOINT_COL = 'merged_time'
 
@@ -303,6 +304,38 @@ def fix_organism_labels(adata):
 # STAGE 1: FULL PREPARATION
 # =============================================================================
 
+def pseudobulk_groups(obs):
+    """Group cells by dataset | cell type | sample | time point.
+
+    Returns {group: cell names} and one metadata row per group (first cell's values, in order of
+    first appearance). Cells without a cell type (UNASSIGNED_LABELS, e.g. transferred labels that
+    failed the precision filter of step 06) are left out.
+    """
+    unassigned = obs[CELLTYPE_COL].astype(str).isin(UNASSIGNED_LABELS).to_numpy()
+    if unassigned.any():
+        print(f"   Leaving out {unassigned.sum():,} cells without a cell type ({', '.join(UNASSIGNED_LABELS)}):")
+        for ds, n in obs.loc[unassigned, DATASET_COL].astype(str).value_counts().items():
+            print(f"     {ds}: {n:,}")
+    obs = obs.loc[~unassigned]
+    key = (obs[DATASET_COL].astype(str) + '|' + obs[CELLTYPE_COL].astype(str) + '|' +
+           obs['merged_sample'].astype(str) + '|' + obs['merged_time'].astype(str))
+    positions = key.groupby(key.to_numpy(), sort=False).indices
+    group_to_cells = {g: obs.index[p] for g, p in positions.items()}
+    new_group = ~key.duplicated().to_numpy()
+    first, groups = obs.loc[new_group], key[new_group]
+    pb_meta = pd.DataFrame({
+        'sample_id': groups.to_numpy(),
+        'dataset': first[DATASET_COL].to_numpy(),
+        'cell_type': first[CELLTYPE_COL].to_numpy(),
+        'sample': first['merged_sample'].to_numpy(),
+        'organism': first[SPECIES_COL].to_numpy(),
+        'timepoint': first['merged_time'].to_numpy(),
+        'sample_type': first['sample_type'].to_numpy(),
+        'n_cells': [len(positions[g]) for g in groups.to_numpy()],
+    })
+    return group_to_cells, pb_meta
+
+
 def stage1_prepare_and_export():
     print("=" * 70)
     print("STAGE 1: Prepare metadata and export for R")
@@ -336,39 +369,8 @@ def stage1_prepare_and_export():
     
     # Create pseudobulk groups BEFORE loading full genes
     print(f"\n2. Creating pseudobulk groups...")
-    adata.obs['_pb_group'] = (
-        adata.obs[DATASET_COL].astype(str) + '|' +
-        adata.obs[CELLTYPE_COL].astype(str) + '|' +
-        adata.obs['merged_sample'].astype(str) + '|' +
-        adata.obs['merged_time'].astype(str)
-    )
-    
-    groups = adata.obs['_pb_group'].unique()
-    n_groups = len(groups)
-    print(f"   Groups: {n_groups:,}")
-    
-    # Build group -> cell indices mapping
-    group_to_cells = {}
-    for group in groups:
-        mask = adata.obs['_pb_group'] == group
-        group_to_cells[group] = list(adata.obs_names[mask])
-    
-    # Build group metadata
-    pb_meta = []
-    for group in groups:
-        mask = adata.obs['_pb_group'] == group
-        row = adata.obs.loc[mask].iloc[0]
-        pb_meta.append({
-            'sample_id': group, 
-            'dataset': row[DATASET_COL], 
-            'cell_type': row[CELLTYPE_COL],
-            'sample': row['merged_sample'], 
-            'organism': row[SPECIES_COL],
-            'timepoint': row['merged_time'], 
-            'sample_type': row['sample_type'], 
-            'n_cells': mask.sum()
-        })
-    pb_meta = pd.DataFrame(pb_meta)
+    group_to_cells, pb_meta = pseudobulk_groups(adata.obs)
+    print(f"   Groups: {len(pb_meta):,}")
     
     # Save UMAP before loading full genes
     if UMAP_KEY in adata.obsm:

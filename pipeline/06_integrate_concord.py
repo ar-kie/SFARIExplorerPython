@@ -38,6 +38,9 @@ Design choices
     labels fill the unlabelled cells. Provenance is stored in obs['label_source'].
   * UMAP is fitted on a stratified subsample (the app only displays a subsample);
     obsm['X_umap'] is NaN for the remaining cells.
+  * The training result (latent space, class predictions) is saved to data/concord/checkpoint/
+    right after training. A rerun with the same cells, domains, training labels, features and
+    parameters reuses it instead of training again (--retrain to force).
 
 Usage (Minerva; see jobs/run_integrate_concord.lsf, CPU by default):
     python pipeline/06_integrate_concord.py
@@ -49,6 +52,7 @@ batch size (512-1024) shortens training.
 import argparse
 import datetime as dt
 import gc
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -200,6 +204,47 @@ def run_concord(adata, args, device):
     return ccd.__version__, params
 
 
+def training_fingerprint(adata, features, args):
+    """Cells, domains, training labels, features, training parameters and CONCORD version."""
+    import concord as ccd
+    h = hashlib.sha256()
+    h.update(pd.util.hash_pandas_object(adata.obs[[DATASET_COL, '_train_label']], index=True).to_numpy().tobytes())
+    h.update('\n'.join(map(str, features)).encode())
+    keys = ('latent_dim', 'n_epochs', 'batch_size', 'lr', 'classifier_weight', 'label_transfer', 'seed')
+    h.update(json.dumps({k: getattr(args, k) for k in keys}, sort_keys=True).encode())
+    h.update(ccd.__version__.encode())
+    return h.hexdigest()
+
+
+def save_checkpoint(adata, d, fingerprint, version, params):
+    """Latent space and class outputs of a finished training, so later failures do not cost it."""
+    d.mkdir(parents=True, exist_ok=True)
+    np.save(d / 'latent.npy', np.asarray(adata.obsm['Concord'], dtype=np.float32))
+    cols = [c for c in adata.obs.columns if c.startswith('Concord_class_')]
+    if cols:
+        adata.obs[cols].reset_index(drop=True).to_parquet(d / 'classes.parquet')
+    meta = {'fingerprint': fingerprint, 'version': version, 'n_obs': int(adata.n_obs), 'class_columns': cols,
+            'params': {k: str(v) for k, v in params.items() if k != 'device'}}
+    (d / 'checkpoint.json').write_text(json.dumps(meta, indent=2))  # written last: the checkpoint is complete
+
+
+def load_checkpoint(adata, d, fingerprint):
+    """(version, params) and the training outputs in adata, or None if there is no matching checkpoint."""
+    path = d / 'checkpoint.json'
+    if not path.exists():
+        return None
+    meta = json.loads(path.read_text())
+    if meta['fingerprint'] != fingerprint or meta['n_obs'] != adata.n_obs:
+        log(f"   {d} holds a training of other cells, labels, features or parameters; training again")
+        return None
+    adata.obsm['Concord'] = np.load(d / 'latent.npy')
+    if meta['class_columns']:
+        classes = pd.read_parquet(d / 'classes.parquet')
+        classes.index = adata.obs.index
+        adata.obs = pd.concat([adata.obs, classes], axis=1)
+    return meta['version'], meta['params']
+
+
 def label_transfer_qc(obs, holdout):
     """Held-out accuracy of the classifier against author labels (hidden during training)."""
     from sklearn.metrics import classification_report
@@ -255,6 +300,7 @@ def main():
     p.add_argument('--cuml', action='store_true', help='use RAPIDS cuML for UMAP if available')
     p.add_argument('--chunk', type=int, default=200_000, help='rows per chunk when streaming counts')
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--retrain', action='store_true', help='train even if a matching checkpoint exists')
     p.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'],
                    help='auto = GPU if available, else CPU')
     p.add_argument('--threads', type=int, default=int(os.environ.get('LSB_DJOB_NUMPROC') or os.cpu_count() or 1),
@@ -318,15 +364,24 @@ def main():
 
     # 5. CONCORD -----------------------------------------------------------------
     log("5. Training CONCORD")
-    version, params = run_concord(adata, args, device)
+    ckpt = Path(args.outdir) / 'checkpoint'
+    fingerprint = training_fingerprint(adata, features, args)
+    loaded = None if args.retrain else load_checkpoint(adata, ckpt, fingerprint)
+    if loaded:
+        version, params = loaded
+        log(f"   Reusing the training result in {ckpt} (same cells, labels, features and parameters)")
+    else:
+        version, params = run_concord(adata, args, device)
+        save_checkpoint(adata, ckpt, fingerprint, version, params)
+        log(f"   Training result saved to {ckpt}")
     adata.obsm['X_concord'] = adata.obsm.pop('Concord').astype(np.float32)
 
     if args.label_transfer:
         prob_cols = [c for c in adata.obs.columns if c.startswith('Concord_class_prob_')]
         probs = adata.obs[prob_cols].astype(np.float32)
         probs.columns = [c.replace('Concord_class_prob_', '') for c in prob_cols]
-        probs.index.name = 'cell_id'
-        probs.reset_index().to_parquet(Path(args.outdir) / 'concord_class_probabilities.parquet')
+        # rename_axis returns a new index; setting probs.index.name would rename adata.obs.index too
+        probs.rename_axis('cell_id').reset_index().to_parquet(Path(args.outdir) / 'concord_class_probabilities.parquet')
         adata.obs['concord_label'] = adata.obs['Concord_class_pred'].astype(str)
         adata.obs['predicted_labels_confidence'] = probs.max(axis=1).to_numpy()
         adata.obs = adata.obs.drop(columns=prob_cols + [c for c in ('Concord_class_pred', 'Concord_class_true')
@@ -368,6 +423,8 @@ def main():
     for c in adata.obs.columns:
         if adata.obs[c].dtype == object:
             adata.obs[c] = adata.obs[c].astype(str)
+    if adata.obs.index.name in adata.obs.columns:  # h5ad cannot store an index named like a column
+        adata.obs = adata.obs.rename_axis(None)
     adata.uns['concord'] = {'version': version, 'features': len(features),
                             'params': {k: str(v) for k, v in params.items() if k != 'device'}}
     adata.write_h5ad(args.output)

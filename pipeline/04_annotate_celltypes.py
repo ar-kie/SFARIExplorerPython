@@ -16,24 +16,27 @@ STEP_NAME = "04_annotate_celltypes"
 # CELL TYPE SUPERCATEGORY PATTERNS
 # =============================================================================
 
+# Velmeshev (2019) clusters (L2/3, L4, L5/6, L5/6-CC, IN-SV2C, AST-PP/FB, Neu-NRGN-I/II, Neu-mat) matched
+# none of the rules and became "Other" (38 % of the dataset in the previous build); the anchored
+# alternatives at the end of four rules cover exactly these names.
 PATTERNS = [
     # Excitatory neurons
-    (re.compile(r"excitatory|glutamatergic|glut[0-9]?|pyramidal|projection|^ex[_\-]|^ex[0-9]|cortic.*neuron|ctx.*ex|^l[2-6].*it|^l[2-6].*et|^l[2-6].*ct|^l[2-6].*np|intratelencephalic|extratelencephalic|corticofugal|corticothalamic|subcerebral|cajal.retzius|^cr\b|reelin|granule.neuron|unipolar.brush|cerebellar.granule|dentate.*granule", re.I), "Excitatory Neurons"),
+    (re.compile(r"excitatory|glutamatergic|glut[0-9]?|pyramidal|projection|^ex[_\-]|^ex[0-9]|cortic.*neuron|ctx.*ex|^l[2-6].*it|^l[2-6].*et|^l[2-6].*ct|^l[2-6].*np|intratelencephalic|extratelencephalic|corticofugal|corticothalamic|subcerebral|cajal.retzius|^cr\b|reelin|granule.neuron|unipolar.brush|cerebellar.granule|dentate.*granule|^l[2-6](/[2-6])?([\-_ ]?cc)?$", re.I), "Excitatory Neurons"),
     
     # Inhibitory neurons
-    (re.compile(r"inhibitory|gabaergic|gaba[_\-]?[0-9]?|interneuron|inter[_\-\s]neuron|\bin[_\-\s]?[0-9]|\bpv\b|\bsst\b|\bvip\b|lamp5|pvalb|somatostatin|parvalbumin|chandelier|basket|martinotti|neurogliaform|caudal.ganglionic|medial.ganglionic|cge|mge|lge|sncg|id2|htr3a|glycinergic|amacrine|purkinje|olfactory.*granule", re.I), "Inhibitory Neurons"),
+    (re.compile(r"inhibitory|gabaergic|gaba[_\-]?[0-9]?|interneuron|inter[_\-\s]neuron|\bin[_\-\s]?[0-9]|\bpv\b|\bsst\b|\bvip\b|lamp5|pvalb|somatostatin|parvalbumin|chandelier|basket|martinotti|neurogliaform|caudal.ganglionic|medial.ganglionic|cge|mge|lge|sncg|id2|htr3a|glycinergic|amacrine|purkinje|olfactory.*granule|^in[\-_ ](pv|sst|vip|sv2c)$", re.I), "Inhibitory Neurons"),
     
     # Dopaminergic & monoaminergic
     (re.compile(r"dopamin|seroton|noradren|adrenergic|catecholamin|tyrosine.hydroxylase|\bth\+|\bda\b.*neuron|5-?ht|monoamin|\bdopa\b|snc.*vta|foxa1.*dopa", re.I), "Dopaminergic & Monoaminergic"),
     
     # Generic neurons
-    (re.compile(r"\bneuron|\bnrn\b|neuronal|granule.cell|purkinje|motor.neuron|sensory.neuron|spiny.neuron|medium.spiny|cholinergic|^msn|striatal|^d1[_\-\s]|^d2[_\-\s]|spn\b|dspn|ispn|neural.cell|^en[0-9]|photoreceptor|mueller.cell|retinal.ganglion", re.I), "Neurons (General)"),
+    (re.compile(r"\bneuron|\bnrn\b|neuronal|granule.cell|purkinje|motor.neuron|sensory.neuron|spiny.neuron|medium.spiny|cholinergic|^msn|striatal|^d1[_\-\s]|^d2[_\-\s]|spn\b|dspn|ispn|neural.cell|^en[0-9]|photoreceptor|mueller.cell|retinal.ganglion|^neu[\-_ ](nrgn|mat)", re.I), "Neurons (General)"),
     
     # Neural progenitors & stem cells
     (re.compile(r"progenitor|radial.glia|\brg\b|rgc|neural.stem|neuroblast|\bnpc\b|\bnsc\b|intermediate.progenitor|\bipc\b|\bip\b|outer.radial|inner.radial|org\b|irg\b|ventricular.zone|\bvz\b|subventricular|\bsvz\b|dividing|proliferat|cycling|mitotic|^div|glioblast|neuroepithel|^np[0-9]|neuroplacodal|placode|optic.cup|neurecto", re.I), "Neural Progenitors & Stem Cells"),
     
     # Astrocytes
-    (re.compile(r"astrocyte|astro[_\-\s]?[0-9]?|\basc\b|bergmann|fibrous.astro|protoplasmic|gfap\+|^astr|astro.*(te|nt).*nn", re.I), "Astrocytes"),
+    (re.compile(r"astrocyte|astro[_\-\s]?[0-9]?|\basc\b|bergmann|fibrous.astro|protoplasmic|gfap\+|^astr|astro.*(te|nt).*nn|^ast[\-_ ](pp|fb)$", re.I), "Astrocytes"),
     
     # Oligodendrocyte lineage
     (re.compile(r"oligodendro|\bolig[_\-]?[0-9]?|\bopc\b|\bol[_\-]?[0-9]|myelin|mature.oligo|committed.oligo|newly.formed|nfol|mfol|\bmol\b|cop\b|polydendrocyte|^oligo|opc.*nn|oligo.*nn|preopc", re.I), "Oligodendrocyte Lineage"),

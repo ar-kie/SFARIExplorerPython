@@ -103,6 +103,21 @@ def fix_organism_labels(obs):
     return obs
 
 
+def check_dataset_names(obs, allow):
+    """Datasets are CONCORD's domains: stop if the input still carries names the configuration no longer
+    uses (e.g. one name for several datasets before scripts/relabel_datasets.py was applied)."""
+    try:
+        import config
+    except Exception as e:  # config needs the pipeline layout; skip the check outside it
+        log(f"   (dataset names not checked: {e})")
+        return
+    known = {m['dataset'] for m in config.DATASET_META.values()}
+    stale = sorted(set(obs[DATASET_COL].astype(str)) - known)
+    if stale and not allow:
+        raise SystemExit(f"Dataset names not in the configuration: {stale}. Run scripts/relabel_datasets.py --apply "
+                         "(after fetch_cellxgene.py register), or pass --allow-stale-names.")
+
+
 def stratified_sample(groups: pd.Series, n: int, min_per_group: int, rng) -> np.ndarray:
     """Proportional sample of ~n positions with at least min_per_group per group (or all)."""
     pos = np.arange(len(groups))
@@ -352,6 +367,8 @@ def main():
     p.add_argument('--chunk', type=int, default=200_000, help='rows per chunk when streaming counts')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--retrain', action='store_true', help='train even if a matching checkpoint exists')
+    p.add_argument('--allow-stale-names', action='store_true',
+                   help='run although dataset names in the input differ from the configuration')
     p.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'],
                    help='auto = GPU if available, else CPU')
     p.add_argument('--threads', type=int, default=int(os.environ.get('LSB_DJOB_NUMPROC') or os.cpu_count() or 1),
@@ -372,6 +389,7 @@ def main():
     log(f"1. Opening {args.input} (backed)")
     adata_b = ad.read_h5ad(args.input, backed='r')
     obs = fix_organism_labels(adata_b.obs.copy())
+    check_dataset_names(obs, args.allow_stale_names)
     log(f"   {adata_b.n_obs:,} cells x {adata_b.n_vars:,} genes")
     log("   Library sizes and per-species detection")
     libsize, det_frac = scan_counts(adata_b, obs[SPECIES_COL].astype(str), args.chunk)

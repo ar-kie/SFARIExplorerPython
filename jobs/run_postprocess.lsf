@@ -20,9 +20,16 @@
 #
 # Submit from the repository root:  bsub < jobs/run_postprocess.lsf
 
+# ~/.bashrc and conda's activation scripts are not written for `set -e` (a non-zero last command
+# in .bashrc ended the job with exit code 2 before any step ran), so set up the shell first.
+source ~/.bashrc || true
+activate() {
+  set +e; conda activate "$1"; local rc=$?; set -e
+  [ "$rc" -eq 0 ] || { echo "conda activate $1 failed" >&2; exit 1; }
+  echo "   environment: ${CONDA_PREFIX:-$1}"
+}
 set -eo pipefail   # no -u: conda activation scripts reference unset variables
-source ~/.bashrc
-conda activate "${CONDA_ENV:-concord}"
+activate "${CONDA_ENV:-concord}"
 export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
 export SFARI_EXCHANGE_DIR="${SFARI_EXCHANGE_DIR:-$SFARI_ROOT/data/r_exchange}"
 mkdir -p "$SFARI_EXCHANGE_DIR"
@@ -34,9 +41,9 @@ for step in ${STEPS:-pseudobulk metadata ages correct parquets}; do
     pseudobulk) python pipeline/prep_sfari_data_v8.py --stage 1 ;;
     metadata)   python pipeline/add_missing_metadata.py && python pipeline/create_merged_columns.py ;;
     ages)       python pipeline/normalize_age.py ;;
-    correct)    conda activate "${R_ENV:-r_correction}"   # envs/r_correction.yml
+    correct)    activate "${R_ENV:-r_correction}"   # envs/r_correction.yml
                 Rscript pipeline/correct_within_org.R
-                conda activate "${CONDA_ENV:-concord}" ;;
+                activate "${CONDA_ENV:-concord}" ;;
     parquets)   python pipeline/prep_sfari_data_v5.py --stage 2 ;;
     *) echo "unknown step: $step" >&2; exit 1 ;;
   esac

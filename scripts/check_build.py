@@ -74,18 +74,26 @@ def datasets():
             print(f"  SKIPPED in step 01: {k}: {r.get('error', 'no raw-count source found')}")
     from h5io import read_elem
     with h5py.File(f"{PIPE}/sfari_final.h5ad", "r") as f:
-        obs = pd.DataFrame({c: read_elem(f[f"obs/{c}"]) for c in ["dataset", "organism", "cell_type_supercategory"]})
+        cols = [c for c in ["dataset", "organism", "cell_type_supercategory", "cell_type_merged"] if f"obs/{c}" in f]
+        obs = pd.DataFrame({c: read_elem(f[f"obs/{c}"]) for c in cols})
     n = obs.groupby("dataset", observed=True).size()
-    unk = obs.assign(u=obs.cell_type_supercategory.astype(str).isin(["Unknown", "Other", ""])) \
-             .groupby("dataset", observed=True)["u"].mean()
+    sc_ = obs.cell_type_supercategory.astype(str)
+    share = lambda m: (100 * obs.assign(u=m).groupby("dataset", observed=True)["u"].mean()).round(1).astype(str) + " %"
     t = pd.DataFrame({"organism": obs.groupby("dataset", observed=True)["organism"].first(), "cells": n,
-                      "no author label": (100 * unk).round(1).astype(str) + " %"}).sort_values(["organism", "cells"])
+                      "no author label": share(sc_.isin(["Unknown", ""])),
+                      "'Other'": share(sc_ == "Other")}).sort_values(["organism", "cells"])
     missing = sorted(set(expected.values()) - set(n.index))
     mixed = obs.groupby("dataset", observed=True)["organism"].nunique()
     for ds in mixed[mixed > 1].index:
         print(f"  SEVERAL SPECIES under one name: {ds} -> run fetch_cellxgene.py register, then scripts/relabel_datasets.py")
     print(t.to_string()); print(f"  total: {n.sum():,} cells in {len(n)} datasets")
     if missing: print(f"  MISSING from the final object: {missing}")
+    if "cell_type_merged" in obs:
+        other = obs[sc_ == "Other"]
+        big = other.groupby("dataset", observed=True).size() / n
+        for ds in big[big > 0.02].index:
+            top = other.loc[other.dataset == ds, "cell_type_merged"].astype(str).value_counts().head(10)
+            print(f"  author labels mapped to 'Other' in {ds}: " + ", ".join(f"{k} ({v:,})" for k, v in top.items()))
 
 
 @guarded

@@ -54,6 +54,11 @@ columns to `DATASET_SAMPLE_COL` / `DATASET_TIME_COL` in `prep_sfari_data_v8.py` 
 - **No raw counts found**: check `dataset_inspection.json`; use a source file with counts in `X`, `.raw.X`
   or a layer (and `DATASET_LAYER_OVERRIDE`).
 - **Genes left as Ensembl IDs**: provide `gene_maps/<key>_gene_map.csv` with `ensembl_gene_id,symbol`.
+- **Dataset names changed** (e.g. after `fetch_cellxgene.py register`): `python scripts/relabel_datasets.py --apply`
+  renames the cells in the step 03-05 outputs. Step 06 refuses to start while names in its input are not in
+  the configuration, since dataset names are CONCORD's domains.
+- **Many author labels in "Other"**: `scripts/check_build.py` lists the most frequent ones per dataset; add a rule
+  to `PATTERNS` in `04_annotate_celltypes.py` and rerun steps 04-05 (delete their checkpoints).
 
 ## Step 06: CONCORD integration and label transfer
 

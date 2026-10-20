@@ -18,7 +18,7 @@ pipeline/
   01..05_*.py           01-05 inspect, gene universe, concatenate, cell types, developmental stages
   06_integrate_concord.py   CONCORD integration + label transfer (replaces scVI/scANVI)
   prep_sfari_data_v8.py, add_missing_metadata.py, create_merged_columns.py, normalize_age.py,
-  correct_within_org.R, prep_sfari_data_v5.py     pseudobulk, ages, batch correction, parquets
+  correct_within_org.R, build_app_data.py        pseudobulk, ages, batch correction, app data
   dataset_registry.py   per-dataset settings shared by the scripts above
   h5io.py               partial h5ad reads and streamed writes, so 01-05 never load the whole matrix
 jobs/                   LSF job scripts (submit from the repository root)
@@ -58,7 +58,7 @@ Update later with `git pull`. To push uncommitted local changes instead, use
 | 00 add CELLxGENE data (optional) | `python pipeline/cellxgene/fetch_cellxgene.py search`, review `manifest.tsv`, then `bsub < jobs/run_fetch_cellxgene.lsf` | `data/cellxgene/prepared/*.h5ad`, `registry.json` |
 | 01–05 build | `bash jobs/run_pipeline_01-05.sh` | `pipeline_output/concatenated_annotated.h5ad` |
 | 06 integrate | `bsub < jobs/run_integrate_concord.lsf` | `data/combined_concord_label_transfer.h5ad`, `data/concord/` |
-| 07 post-process | `bsub < jobs/run_postprocess.lsf` | pseudobulk, voom + ComBat (within species), long-format parquets |
+| 07 post-process | `bsub < jobs/run_postprocess.lsf` | pseudobulk, voom + ComBat (within species), app data in `data/app/` |
 | **01–07 in one go** | `bash jobs/run_all.sh` (needs an empty `pipeline_output/`) | all of the above, chained by job dependencies |
 | check the build | `python scripts/check_build.py \| tee build_report.txt` | jobs, datasets, label transfer, ages, correction, binning |
 
@@ -95,17 +95,12 @@ bash scripts/sync_hf_space.sh ../hf_space
 cd ../hf_space && git diff && git commit -am "Update app" && git push
 ```
 
-A new data build goes into the Space's `data/`. Add `build_info.json` (from `data/concord/`) and
-`dataset_references.json` (from `data/cellxgene/`) so the app reports the integration method and the
-references of added datasets.
+A new data build is the contents of `$SFARI_ROOT/data/app/` (step 07, `build_app_data.py`), including
+`build_info.json` and `dataset_references.json`; copy it into the Space's `data/`.
 
 ## Known gaps
 
-- The script that converts the long-format parquets (step 07) into the app's wide format
-  (`expression_mean/pct/meta`, `temporal_mean/meta`, `stage_mapping` with `relative_dev_time`) is not in this
-  repository. It was run on Minerva for the current build and should be added under `pipeline/`.
-- Steps 06–07 have not yet been run with CONCORD on the full data. Step 06 was tested end to end on
-  synthetic data.
+- Steps 06–07 have not yet completed together on the full data with the final dataset names.
 
 ## Data and citation
 

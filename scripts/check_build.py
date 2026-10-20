@@ -156,18 +156,14 @@ def correction():
 
 @guarded
 def binning():
-    section("6. Developmental binning (parquet_v2/temporal_expression.parquet, one gene)")
-    path = f"{DATA}/parquet_v2/temporal_expression.parquet"
-    cols = ["species", "tissue", "sample_type", "timepoint", "numeric_time", "time_bin", "time_order", "unified_stage"]
-    for gene in KEY_GENES:  # every gene has the same groups; read one
-        t = pq.read_table(path, columns=cols, filters=[("gene_human", "=", gene)]).to_pandas()
-        if len(t): break
-    print(f"  {len(t):,} temporal groups ({gene})")
-    unb = t[(t["time_order"] == 99) | t["unified_stage"].isna()]
-    if len(unb):
-        print("  time points without a developmental bin (excluded from cross-species stages):")
-        print(unb.groupby(["species", "tissue", "sample_type"])["timepoint"].unique().apply(lambda v: list(v)[:6]).to_string())
+    section("6. App data: developmental time (data/app/temporal_meta.parquet)")
+    t = pd.read_parquet(f"{DATA}/app/temporal_meta.parquet")
+    print(f"  {len(t):,} temporal groups; files in data/app: {len(os.listdir(f'{DATA}/app'))}")
+    r = t.groupby(["species", "sample_type"]).agg(datasets=("tissue", "nunique"), groups=("row_id", "size"),
+                                                   rel_min=("relative_dev_time", "min"), rel_max=("relative_dev_time", "max"))
+    print(r.round(3).to_string())
     print(t.groupby(["species", "sample_type", "time_order", "time_bin"]).size().rename("groups").to_string())
+    print("  unified stages:", t.groupby("unified_stage").size().to_dict())
 
 
 if __name__ == "__main__":

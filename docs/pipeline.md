@@ -98,7 +98,7 @@ bsub < jobs/run_integrate_concord.lsf     # CPU, 16 cores (GPU settings are in t
 ## Steps after integration
 
 ```bash
-bsub < jobs/run_postprocess.lsf           # pseudobulk -> metadata -> ages -> correction -> parquets
+bsub < jobs/run_postprocess.lsf           # pseudobulk -> metadata -> ages -> correction -> app data
 ```
 
 | Step | Script | Reads | Writes |
@@ -107,7 +107,15 @@ bsub < jobs/run_postprocess.lsf           # pseudobulk -> metadata -> ages -> co
 | metadata | `add_missing_metadata.py`, `create_merged_columns.py` | CONCORD output | per-cell h5ad with merged sample/time columns |
 | ages | `normalize_age.py` | `pseudobulk_meta.csv`, per-cell h5ad | `pseudobulk_meta_numeric_time.csv` |
 | correct | `correct_within_org.R` (R env: `envs/r_correction.yml`) | counts + numeric-time metadata | `corrected_expression.csv` (voom, ComBat within species) |
-| parquets | `prep_sfari_data_v5.py --stage 2` | corrected expression + metadata | `expression_summaries`, `temporal_expression`, ... (long format) |
+| app | `build_app_data.py` | corrected expression, counts, numeric-time metadata, CONCORD UMAP | `data/app/`: the app's wide-format parquets, `build_info.json`, `dataset_references.json` |
+
+`build_app_data.py` is step 3 of `sfari_postprocess.py`, which built the data of earlier releases, with the same
+table definitions (verified identical on test data). It adds the relative developmental time from
+`numeric_time`: piecewise-linear between landmarks, 0 = fertilisation, 0.45 = birth or hatching (human 280 dpc,
+mouse 20 dpc, zebrafish 72 hpf), 1 = maturity (human 25 y, mouse P56, zebrafish 90 dpf); human organoid days
+map onto fetal equivalents (day 30 = 0.10, day 180 = 0.40); Drosophila adults start at 1.0 at eclosion. The
+unified stages cut this scale at 0.15, 0.30, 0.45, 0.60, 0.80 and 1.15. The long-format parquets of
+`prep_sfari_data_v5.py --stage 2` are not used by the app; run them with `STEPS=parquets` if needed.
 
 All of them read and write `$SFARI_EXCHANGE_DIR` (default `data/r_exchange`; `prep_sfari_data_v8.py` alone
 defaults to `data/r_exchange_v3`, so set the variable when running the steps individually).

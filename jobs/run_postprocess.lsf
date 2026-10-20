@@ -13,9 +13,10 @@
 #   metadata     add_missing_metadata.py, create_merged_columns.py   per-cell metadata (organoid ages)
 #   ages         normalize_age.py                  pseudobulk_meta_numeric_time.csv
 #   correct      correct_within_org.R              voom + ComBat within species -> corrected_expression.csv
-#   parquets     prep_sfari_data_v5.py --stage 2   expression_summaries / temporal_expression parquets
+#   app          build_app_data.py                 the app's wide-format parquets in data/app/
 # All steps share one exchange directory (SFARI_EXCHANGE_DIR). Run a subset with e.g.
-#   STEPS="ages correct parquets" bsub < jobs/run_postprocess.lsf
+#   STEPS="ages correct app" bsub < jobs/run_postprocess.lsf
+# The long-format parquets of prep_sfari_data_v5.py --stage 2 (not used by the app) run with STEPS=parquets.
 # Environments: CONDA_ENV (Python, envs/concord.yml) and R_ENV (R, envs/r_correction.yml), names or paths.
 #
 # Submit from the repository root:  bsub < jobs/run_postprocess.lsf
@@ -35,7 +36,7 @@ export SFARI_EXCHANGE_DIR="${SFARI_EXCHANGE_DIR:-$SFARI_ROOT/data/r_exchange}"
 mkdir -p "$SFARI_EXCHANGE_DIR"
 cd "${LS_SUBCWD:-.}"
 
-for step in ${STEPS:-pseudobulk metadata ages correct parquets}; do
+for step in ${STEPS:-pseudobulk metadata ages correct app}; do
   echo "== $step"
   case "$step" in
     pseudobulk) python pipeline/prep_sfari_data_v8.py --stage 1 ;;
@@ -44,6 +45,7 @@ for step in ${STEPS:-pseudobulk metadata ages correct parquets}; do
     correct)    activate "${R_ENV:-r_correction}"   # envs/r_correction.yml
                 Rscript pipeline/correct_within_org.R
                 activate "${CONDA_ENV:-concord}" ;;
+    app)        python pipeline/build_app_data.py ;;
     parquets)   python pipeline/prep_sfari_data_v5.py --stage 2 ;;
     *) echo "unknown step: $step" >&2; exit 1 ;;
   esac

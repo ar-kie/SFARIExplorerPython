@@ -376,6 +376,58 @@ def conservation_page(ctx: Ctx):
     other = c2.selectbox("Compare with", [s for s in present if s != ref], key="cons_other")
     show(P.fig_pair_scatter(prof, gene, ref, other), "cons_scatter")
 
+    _pair_over_time(ctx, genes, ref)
+
+
+MODULE_OPTION = "Module: median of the selected genes"
+
+
+def _pair_over_time(ctx: Ctx, genes: list, ref: str):
+    """Two species groups compared per cell type along the relative developmental time scale."""
+    st.markdown("#### Over developmental time")
+    tdf = ctx.tt(tuple(genes))
+    if tdf.empty:
+        st.info("No time-resolved data for these genes under the current filters.")
+        return
+    tdf = tdf.assign(grp=[P.species_group(s, t) for s, t in zip(tdf["species"], tdf["sample_type"])])
+    groups = P._group_order(tdf.loc[tdf["log2cpm"].notna(), "grp"])
+    if len(groups) < 2:
+        st.info("Needs time-resolved values in at least two species.")
+        return
+    c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+    options = ([MODULE_OPTION] if len(genes) > 1 else []) + list(genes)
+    what = c1.selectbox("Gene", options, key="pair_t_gene")
+    ga = c2.selectbox("Species", groups, index=groups.index(ref) if ref in groups else 0, key="pair_t_a")
+    others = [g for g in groups if g != ga]
+    in_vivo = [i for i, g in enumerate(others) if not g.endswith("organoid")]   # default: another species
+    gb = c3.selectbox("Compared with", others, index=in_vivo[0] if in_vivo else 0, key="pair_t_b")
+    vchoice = c4.selectbox("Values", ["Δ log2 CPM", "z-score"], key="pair_t_values",
+                           help="Scaled within gene × dataset × cell type across time points, so trajectory "
+                                "shapes are compared, not absolute levels.")
+    within = ["gene", "dataset", "sample_type", "cell_type"]
+    if what == MODULE_OPTION:
+        sdf, _, label, _ = _scaled(tdf, vchoice, within)
+        keys = ["species", "sample_type", "grp", "dataset", "cell_type", "relative_dev_time", "age_label"]
+        sdf = (sdf.groupby(keys, observed=True)
+                  .agg(scaled=("scaled", "median"), n_cells=("n_cells", "first")).reset_index())
+        label, name = f"median {label}", f"{len(genes)} genes (median)"
+    else:
+        sdf, _, label, _ = _scaled(tdf[tdf["gene"] == what], vchoice, within)
+        name = what
+    fig, agree = P.fig_pair_trajectories(sdf, "scaled", label, ga, gb, title=f"{name}: {ga} vs {gb}")
+    show(fig, "pair_time")
+    no_window = agree.loc[agree["r"].isna(), "cell_type"]
+    st.caption(
+        "Each row is a cell type. Points: dataset × age groups (marker area ∝ log10 cells; open = organoid); lines: "
+        "kernel-smoothed trends as on the Gene page, not drawn across unsampled periods; each row has its own "
+        "y range (set by the trends, points beyond it are clipped). The grey band is the "
+        "window where both species are sampled; r is the Pearson correlation of the two trends inside it "
+        "(rows sorted by r). r compares trajectory shapes on the relative time scale, which aligns species at "
+        "birth/hatching (0.45) and maturity (1.0); smoothed trends are autocorrelated, so r is descriptive and "
+        "carries no p-value. A cell type needs a shared window of at least 0.15 units with three ages per "
+        "species." + (f" No shared window: {', '.join(P._short(c) for c in P._ct_order(no_window))}."
+                      if len(no_window) else ""))
+
 
 # ---------------------------------------------------------------------------
 # Cell atlas

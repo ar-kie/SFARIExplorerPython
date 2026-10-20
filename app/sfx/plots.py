@@ -120,6 +120,26 @@ def _diverging_range(values, cap=3.0) -> float:
     return float(min(cap, np.nanpercentile(v, 98))) if len(v) else 1.0
 
 
+def _trend_setup(x, y, w):
+    """Shared rules of the kernel trend: finite points, bandwidth, sampled segments (>= 3 distinct ages)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    w = np.ones_like(x) if w is None else np.asarray(w, float)
+    ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(w)
+    x, y, w = x[ok], y[ok], w[ok]
+    ux = np.unique(x)
+    if len(ux) < 3:
+        return None
+    h = float(np.clip(1.5 * np.median(np.diff(ux)), 0.04, 0.08))
+    breaks = np.flatnonzero(np.diff(ux) > max(4 * h, 0.08))
+    segments = [seg for seg in np.split(ux, breaks + 1) if len(seg) >= 3]
+    return x, y, w, h, segments, ux
+
+
+def _nadaraya_watson(grid, x, y, w, h):
+    k = np.exp(-0.5 * ((grid[:, None] - x[None, :]) / h) ** 2) * w[None, :]
+    return (k * y).sum(1) / k.sum(1)
+
+
 def kernel_trend(x, y, w=None, n_grid=200):
     """Gaussian-kernel (Nadaraya–Watson) trend, weighted by ``w``.
 
@@ -128,25 +148,30 @@ def kernel_trend(x, y, w=None, n_grid=200):
     broken across sampling gaps wider than max(4 h, 0.08), so the trend never
     bridges unsampled periods. Returns (grid, yhat) with NaN at breaks.
     """
-    x, y = np.asarray(x, float), np.asarray(y, float)
-    w = np.ones_like(x) if w is None else np.asarray(w, float)
-    ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(w)
-    x, y, w = x[ok], y[ok], w[ok]
-    ux = np.unique(x)
-    if len(ux) < 3:
+    setup = _trend_setup(x, y, w)
+    if setup is None:
         return np.array([]), np.array([])
-    h = float(np.clip(1.5 * np.median(np.diff(ux)), 0.04, 0.08))
-    breaks = np.flatnonzero(np.diff(ux) > max(4 * h, 0.08))
-    segments = np.split(ux, breaks + 1)
+    x, y, w, h, segments, ux = setup
     gx, gy = [], []
     for seg in segments:
-        if len(seg) < 3:
-            continue
         grid = np.linspace(seg[0], seg[-1], max(10, int(n_grid * (seg[-1] - seg[0]) / (ux[-1] - ux[0] + 1e-9))))
-        k = np.exp(-0.5 * ((grid[:, None] - x[None, :]) / h) ** 2) * w[None, :]
         gx += list(grid) + [np.nan]
-        gy += list((k * y).sum(1) / k.sum(1)) + [np.nan]
+        gy += list(_nadaraya_watson(grid, x, y, w, h)) + [np.nan]
     return np.array(gx), np.array(gy)
+
+
+def trend_at(x, y, w, grid) -> np.ndarray:
+    """The kernel trend evaluated on a given grid; NaN outside the sampled segments."""
+    out = np.full(len(grid), np.nan)
+    setup = _trend_setup(x, y, w)
+    if setup is None:
+        return out
+    x, y, w, h, segments, _ = setup
+    for seg in segments:
+        m = (grid >= seg[0]) & (grid <= seg[-1])
+        if m.any():
+            out[m] = _nadaraya_watson(grid[m], x, y, w, h)
+    return out
 
 
 def _add_time_anchors(fig, rows_cols, rel=True, birth=None):
@@ -813,6 +838,121 @@ def fig_pair_scatter(prof: pd.DataFrame, gene: str, sp_a: str, sp_b: str) -> go.
                                  scaleanchor="x", scaleratio=1),
                       legend=dict(title=dict(text="Lineage"), x=1.01, y=1))
     return fig
+
+
+def trajectory_agreement(tdf: pd.DataFrame, value: str, ga: str, gb: str, step: float = 0.01,
+                         min_span: float = 0.15, min_ages: int = 3):
+    """Per cell type, the kernel trends of two species groups on a shared relative-time grid.
+
+    Agreement = Pearson r between the two trends over the window where both are sampled (no bridging of
+    unsampled periods). Computed only if that window spans >= ``min_span`` relative-time units and holds
+    >= ``min_ages`` distinct ages of each group. Trend points are not independent, so r is descriptive
+    (no p-value). ``tdf`` needs a ``grp`` column (species group) and one row per dataset x cell type x age.
+    """
+    grid = np.round(np.arange(0.0, 1.6 + step / 2, step), 6)
+    rows, curves = [], {}
+    for ct, sub in tdf[tdf[value].notna() & tdf["grp"].isin([ga, gb])].groupby("cell_type", observed=True):
+        trend, pts = {}, {}
+        for g in (ga, gb):
+            pts[g] = sub[sub["grp"] == g]
+            trend[g] = trend_at(pts[g]["relative_dev_time"], pts[g][value],
+                                np.sqrt(pts[g]["n_cells"].clip(lower=1)), grid)
+        both = np.isfinite(trend[ga]) & np.isfinite(trend[gb])
+        row = {"cell_type": ct, "r": np.nan, "start": np.nan, "end": np.nan, "span": both.sum() * step,
+               "ages_a": 0, "ages_b": 0}
+        edges = np.flatnonzero(np.diff(np.r_[0, both.astype(int), 0]))
+        windows = [(grid[a], grid[b - 1]) for a, b in zip(edges[::2], edges[1::2])]
+        if both.any():
+            lo, hi = grid[both].min(), grid[both].max()
+            row.update(start=lo, end=hi,
+                       ages_a=pts[ga].loc[pts[ga]["relative_dev_time"].between(lo, hi), "relative_dev_time"].nunique(),
+                       ages_b=pts[gb].loc[pts[gb]["relative_dev_time"].between(lo, hi), "relative_dev_time"].nunique())
+            ya, yb = trend[ga][both], trend[gb][both]
+            if (row["span"] >= min_span and min(row["ages_a"], row["ages_b"]) >= min_ages
+                    and ya.std() > 0 and yb.std() > 0):
+                row["r"] = float(np.corrcoef(ya, yb)[0, 1])
+        rows.append(row)
+        curves[ct] = (trend, pts, windows)
+    return grid, pd.DataFrame(rows), curves
+
+
+def fig_pair_trajectories(tdf: pd.DataFrame, value: str, value_label: str, ga: str, gb: str,
+                          title: str = "") -> tuple[go.Figure, pd.DataFrame]:
+    """Two species groups per cell type on the relative time scale, with trend agreement per cell type.
+
+    Left: dataset x age points and kernel trends of both groups; grey band = window where both are sampled.
+    Right: Pearson r of the two trends within that band. Rows sorted by r.
+    """
+    grid, agree, curves = trajectory_agreement(tdf, value, ga, gb)
+    ok = agree[agree["r"].notna()].sort_values("r", ascending=False)
+    if ok.empty:
+        lacking = [g for g in (ga, gb) if not (tdf["grp"].eq(g) & tdf[value].notna()).any()]
+        msg = (f"No detected time-resolved values in {' or '.join(lacking)} for this selection." if lacking else
+               f"No cell type has a shared developmental window between {ga} and {gb} "
+               "(at least 0.15 relative-time units with three ages in each).")
+        return empty(msg), agree
+    cts = list(ok["cell_type"])
+    n = len(cts)
+    fig = make_subplots(rows=n, cols=2, shared_xaxes=True, column_widths=[0.8, 0.2], horizontal_spacing=0.05,
+                        vertical_spacing=min(0.04, 0.3 / n), subplot_titles=[t for ct in cts for t in (_short(ct), "")])
+    style = {}
+    for g in (ga, gb):
+        sp, org = g.replace(" organoid", ""), g.endswith("organoid")
+        style[g] = dict(color=C.SPECIES_COLORS.get(sp, C.INK_MUTED), dash="dash" if org else "solid", org=org)
+    if style[ga]["color"] == style[gb]["color"] and style[ga]["dash"] == style[gb]["dash"]:
+        style[gb]["dash"] = "dot"
+    for i, ct in enumerate(cts):
+        r = i + 1
+        trend, pts, windows = curves[ct]
+        a = ok.iloc[i]
+        # y range per row from both trends (points outside are clipped), at least ±0.5
+        lim = max(0.5, 1.2 * float(np.nanmax(np.abs(np.r_[trend[ga], trend[gb]]))))
+        tick = float(f"{0.7 * lim:.1g}")  # one significant digit, inside the range
+        for g in (ga, gb):
+            st_, p = style[g], pts[g]
+            fig.add_trace(go.Scatter(
+                x=p["relative_dev_time"], y=p[value], mode="markers", legendgroup=g, showlegend=False,
+                marker=dict(size=_cells_to_size(p["n_cells"], 3, 7), color="white" if st_["org"] else st_["color"],
+                            opacity=0.45, line=dict(color=st_["color"] if st_["org"] else "white", width=1)),
+                customdata=np.c_[p["dataset"], p["age_label"], p["n_cells"]],
+                hovertemplate=(f"<b>{g} · %{{customdata[0]}}</b><br>{_short(ct)} · %{{customdata[1]}} "
+                               f"(rel. %{{x:.2f}})<br>{value_label}: %{{y:.2f}}<br>%{{customdata[2]:,}} cells"
+                               "<extra></extra>")), row=r, col=1)
+            fig.add_trace(go.Scatter(
+                x=grid, y=trend[g], mode="lines", name=g, legendgroup=g, showlegend=i == 0,
+                line=dict(color=st_["color"], width=2.5, dash=st_["dash"]),
+                hovertemplate=f"<b>{g}</b> trend<br>rel. %{{x:.2f}}: %{{y:.2f}}<extra></extra>"), row=r, col=1)
+        fig.add_trace(go.Scatter(x=[0, a["r"]], y=[0, 0], mode="lines", line=dict(color=C.INK_MUTED, width=2),
+                                 hoverinfo="skip", showlegend=False), row=r, col=2)
+        win = ", ".join(f"{x0:.2f}–{x1:.2f}" for x0, x1 in windows)
+        fig.add_trace(go.Scatter(
+            x=[a["r"]], y=[0], mode="markers+text", text=[f"{a['r']:.2f}"],
+            textposition="top right" if a["r"] < -0.7 else "top left" if a["r"] > 0.7 else "top center",
+            textfont=dict(size=11, color=C.INK), marker=dict(size=9, color=C.INK), showlegend=False,
+            hovertemplate=(f"<b>{_short(ct)}</b><br>r = {a['r']:.2f} between the trends<br>shared window: {win} "
+                           f"(relative time, {a['span']:.2f} units)<br>ages in window: {ga} {int(a['ages_a'])}, "
+                           f"{gb} {int(a['ages_b'])}<extra></extra>")), row=r, col=2)
+        for x0, x1 in windows:  # after the traces: Plotly skips shapes on panels that are still empty
+            fig.add_vrect(x0=x0, x1=x1, fillcolor=C.GRID, opacity=1, line_width=0, layer="below", row=r, col=1)
+        fig.update_yaxes(range=[-lim, lim], tickvals=[-tick, 0, tick], row=r, col=1, showgrid=False,
+                         zeroline=False, ticks="outside")
+        fig.update_yaxes(visible=False, range=[-1, 1.6], row=r, col=2)
+        fig.add_hline(y=0, line=dict(color=C.AXIS, width=1), layer="below", row=r, col=1)
+        fig.add_vline(x=0, line=dict(color=C.AXIS, width=1), layer="below", row=r, col=2)
+    _add_time_anchors(fig, [(i + 1, 1) for i in range(n)])
+    for ann in list(fig.layout.annotations):
+        if ann.text:  # subplot titles: left-aligned above each left panel
+            ann.update(x=0, xanchor="left", font=dict(size=11, color=C.INK))
+    fig.update_xaxes(range=[-0.02, 1.5], showgrid=False, col=1)
+    fig.update_xaxes(range=[-1.05, 1.05], showgrid=True, gridcolor=C.GRID, tickvals=[-1, -0.5, 0, 0.5, 1], col=2)
+    fig.update_xaxes(title_text="Relative developmental time", row=n, col=1)
+    fig.update_xaxes(title_text="r between trends", row=n, col=2)
+    fig.add_annotation(text=value_label, textangle=-90, x=-0.06, y=0.5, xref="paper", yref="paper",
+                       showarrow=False, font=dict(size=12, color=C.INK))
+    fig.update_layout(template=TEMPLATE, height=130 + 92 * n, title=title or None,
+                      legend=dict(orientation="h", x=1, xanchor="right", y=1, yanchor="top", yref="container"),
+                      margin=dict(t=88, l=80))
+    return fig, agree
 
 
 # ---------------------------------------------------------------------------

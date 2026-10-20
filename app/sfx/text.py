@@ -89,6 +89,12 @@ gene-level annotation layer; the atlas itself is not restricted to SFARI genes.
   datasets per cell type, ≥ 4 shared cell types). It asks whether the gene is relatively high and low in the same
   cell types. It does not compare absolute levels. Gene-set correlations are compared with a background of
   randomly drawn detected genes (two-sided Mann–Whitney U).
+- **Conservation over development** compares two species (or human in vivo and organoids) cell type by cell type
+  on the relative time scale. Δ log2 CPM (or z-scores) of each dataset are pooled per species and smoothed with the
+  same kernel trend as the trajectory plots; the agreement is the Pearson correlation of the two trends, evaluated
+  on a 0.01-unit grid only where both species are sampled (≥ 0.15 units with ≥ 3 ages each). It compares shapes,
+  not levels, depends on how the relative time scale aligns the species, and is descriptive: neighbouring trend
+  values are not independent, so no p-value is given.
 
 #### Developmental time
 - Native ages were harmonised to days post-conception (human, mouse), hours post-fertilisation (zebrafish),

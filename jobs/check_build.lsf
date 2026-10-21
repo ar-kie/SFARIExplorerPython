@@ -1,0 +1,19 @@
+#!/bin/bash
+#BSUB -J sfari_report
+#BSUB -oo build_report.txt
+#BSUB -P acc_ad-omics
+#BSUB -q premium
+#BSUB -n 1
+#BSUB -R "rusage[mem=16000]"
+#BSUB -W 1:00
+#
+# One-page report on the build (scripts/check_build.py). Activates the environment itself, so it works
+# from any shell, and overwrites build_report.txt (-oo) instead of appending to it.
+#
+# Submit from the repository root:  bsub < jobs/check_build.lsf
+
+source ~/.bashrc || true
+conda activate "${CONDA_ENV:-concord}"   # export CONDA_ENV=/path/to/env before bsub if needed
+export SFARI_ROOT="${SFARI_ROOT:-/sc/arion/projects/ad-omics/raphael/SFARI}"
+cd "${LS_SUBCWD:-.}"
+python scripts/check_build.py

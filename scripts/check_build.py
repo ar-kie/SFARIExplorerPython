@@ -3,7 +3,8 @@
 pseudobulk samples and ages, batch correction, developmental binning, key genes.
 
 Read-only, and never loads a whole matrix (a few GB of memory at most). From the repository root:
-    python scripts/check_build.py | tee build_report.txt
+    bsub < jobs/check_build.lsf               # activates the environment, overwrites build_report.txt
+    python scripts/check_build.py             # or directly, in the activated environment
 """
 import glob, json, os, re, sys
 import h5py, numpy as np, pandas as pd, pyarrow.parquet as pq

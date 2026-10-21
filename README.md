@@ -60,7 +60,7 @@ Update later with `git pull`. To push uncommitted local changes instead, use
 | 06 integrate | `bsub < jobs/run_integrate_concord.lsf` | `data/combined_concord_label_transfer.h5ad`, `data/concord/` |
 | 07 post-process | `bsub < jobs/run_postprocess.lsf` | pseudobulk, voom + ComBat (within species), app data in `data/app/` |
 | **01–07 in one go** | `bash jobs/run_all.sh` (needs an empty `pipeline_output/`) | all of the above, chained by job dependencies |
-| check the build | `python scripts/check_build.py \| tee build_report.txt` | jobs, datasets, label transfer, ages, correction, binning |
+| check the build | `bsub < jobs/check_build.lsf` | `build_report.txt`: jobs, datasets, label transfer, ages, correction, app data |
 
 Adding datasets changes the gene list, and step 03 caches each dataset aligned to the previous list, so a
 rebuild starts from an empty `pipeline_output/`: move the old one aside (`run_all.sh` refuses to start

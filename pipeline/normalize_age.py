@@ -66,6 +66,15 @@ def parse_human_time(timepoint, dataset=None):
     
     tp = str(timepoint).lower().strip()
     
+    # A plain number is days post-conception (e.g. Wang (2025): Estimated_postconceptional_age_in_days),
+    # as in sfari_postprocess.py, which built the earlier releases
+    try:
+        days = float(tp)
+        if days > 0:
+            return days
+    except ValueError:
+        pass
+    
     # Gestational weeks (GW or "Nth week post-fertilization")
     match = re.search(r'(\d+)(?:th|st|nd|rd)?\s*week\s*post-fertilization', tp)
     if match:

@@ -16,6 +16,7 @@ import re
 import numpy as np
 import pandas as pd
 import anndata as ad
+import h5io
 
 # =============================================================================
 # CONFIG
@@ -338,14 +339,15 @@ print(f"\n   Saved: {PSEUDOBULK_META_OUT}")
 # Process h5ad
 print("\n2. Processing h5ad file...")
 try:
-    adata = ad.read_h5ad(INPUT_H5AD)
+    adata = ad.read_h5ad(INPUT_H5AD, backed='r')  # obs in memory; the count matrix stays on disk
     print(f"   Shape: {adata.shape}")
     
-    # Apply normalization for non-organoid samples
-    adata.obs['numeric_time'] = adata.obs.apply(
-        lambda row: normalize_time(row['merged_time'], row['organism'], row['dataset']), 
-        axis=1
-    )
+    # Apply normalization for non-organoid samples (once per distinct time x organism x dataset)
+    keys = list(zip(adata.obs['merged_time'].astype(str), adata.obs['organism'].astype(str),
+                    adata.obs['dataset'].astype(str)))
+    lut = {k: normalize_time(*k) for k in set(keys)}
+    adata.obs['numeric_time'] = np.array([lut[k] for k in keys], dtype=float)
+    del keys
     
     # For organoids, use organoid_age_days directly (only He 2024 has this)
     if 'organoid_age_days' in adata.obs.columns:
@@ -386,8 +388,9 @@ try:
         pct = 100 * n_valid / n_total if n_total > 0 else 0
         print(f"     {org}: {n_valid:,}/{n_total:,} ({pct:.0f}%)")
     
-    # Save
-    adata.write(OUTPUT_H5AD)
+    # Save (HDF5 copies the matrices; obs is replaced)
+    adata.file.close()
+    h5io.write_with_obs(INPUT_H5AD, OUTPUT_H5AD, adata.obs)
     print(f"\n   Saved: {OUTPUT_H5AD}")
     
     # Now update pseudobulk meta with aggregated organoid times
@@ -396,9 +399,11 @@ try:
     # Reload pseudobulk meta
     meta = pd.read_csv(PSEUDOBULK_META_OUT)
     
-    # For each organoid pseudobulk sample (only He 2024), get median organoid_age_days
+    # Organoid pseudobulk samples (only He 2024) whose time point did not parse: median organoid_age_days
+    # of the cells of the same sample and cell type. Parsed ages are kept (overwriting them with a
+    # per-cell-type median collapsed all time points of a cell type onto one age).
     for ds in ORGANOID_DATASETS_WITH_TIME:
-        ds_mask_meta = meta['dataset'] == ds
+        ds_mask_meta = (meta['dataset'] == ds) & meta['numeric_time'].isna()
         if not ds_mask_meta.any():
             continue
             
@@ -416,8 +421,7 @@ try:
                     (ds_obs['predicted_labels'] == row['cell_type'])
                 )
                 if 'merged_sample' in ds_obs.columns and 'sample' in row:
-                    # Add sample matching if available
-                    pass
+                    cell_mask &= ds_obs['merged_sample'].astype(str) == str(row['sample'])
                 
                 if cell_mask.any():
                     org_ages = pd.to_numeric(ds_obs.loc[cell_mask, 'organoid_age_days'], errors='coerce')

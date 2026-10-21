@@ -6,6 +6,7 @@ Selects the best available column per dataset for pseudobulk aggregation.
 import numpy as np
 import pandas as pd
 import anndata as ad
+import h5io
 import gc
 
 # =============================================================================
@@ -28,7 +29,7 @@ print("Creating merged_sample and merged_time columns")
 print("=" * 60)
 
 print("\n1. Loading h5ad file...")
-adata = ad.read_h5ad(INPUT_H5AD)
+adata = ad.read_h5ad(INPUT_H5AD, backed='r')  # obs in memory; the count matrix stays on disk
 print(f"   Shape: {adata.shape}")
 print(f"   Datasets: {adata.obs[DATASET_COL].unique().tolist()}")
 
@@ -234,7 +235,8 @@ for col in ['merged_sample', 'merged_time']:
     adata.obs[col] = adata.obs[col].astype(str)
 
 print(f"  Saving to {OUTPUT_H5AD}...")
-adata.write(OUTPUT_H5AD)
+adata.file.close()
+h5io.write_with_obs(INPUT_H5AD, OUTPUT_H5AD, adata.obs)  # HDF5 copies the matrices, obs is replaced
 
 print("\nDone!")
 print(f"Output: {OUTPUT_H5AD}")

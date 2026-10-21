@@ -336,6 +336,35 @@ def pseudobulk_groups(obs):
     return group_to_cells, pb_meta
 
 
+def pseudobulk_sums(X, group_to_indices, sample_ids, n_genes, rows_per_block=100_000):
+    """Counts summed per pseudobulk group in one pass over row blocks of a (backed) CSR matrix.
+
+    The matrix is stored by cell, so reading it by gene blocks (X[:, a:b]) reads all of it for every
+    block; row blocks are contiguous on disk. Returns groups x genes (float64).
+    """
+    n_obs = X.shape[0]
+    group_of_row = np.full(n_obs, -1, dtype=np.int64)
+    for i, sid in enumerate(sample_ids):
+        group_of_row[group_to_indices[sid]] = i
+    sums = np.zeros((len(sample_ids), n_genes), dtype=np.float64)
+    n_blocks = (n_obs + rows_per_block - 1) // rows_per_block
+    for b, start in enumerate(range(0, n_obs, rows_per_block)):
+        stop = min(start + rows_per_block, n_obs)
+        g = group_of_row[start:stop]
+        keep = np.flatnonzero(g >= 0)
+        if len(keep):
+            block = X[start:stop]
+            block = block.tocsr() if sparse.issparse(block) else sparse.csr_matrix(block)
+            block = block[keep]
+            assign = sparse.csr_matrix((np.ones(len(keep)), (g[keep], np.arange(len(keep)))),
+                                       shape=(len(sample_ids), len(keep)))
+            part = (assign @ block).tocoo()
+            sums[part.row, part.col] += part.data
+        if (b + 1) % 10 == 0 or b + 1 == n_blocks:
+            print(f"   cells {stop:,} / {n_obs:,}")
+    return sums
+
+
 def stage1_prepare_and_export():
     print("=" * 70)
     print("STAGE 1: Prepare metadata and export for R")
@@ -344,8 +373,8 @@ def stage1_prepare_and_export():
     os.makedirs(R_EXCHANGE_DIR, exist_ok=True)
     os.makedirs(PARQUET_DIR, exist_ok=True)
     
-    print(f"\n1. Loading filtered h5ad: {FILTERED_H5AD}")
-    adata = ad.read_h5ad(FILTERED_H5AD)
+    print(f"\n1. Loading filtered h5ad (obs, obsm; counts stay on disk): {FILTERED_H5AD}")
+    adata = ad.read_h5ad(FILTERED_H5AD, backed='r')
     print(f"   Shape: {adata.shape}")
     
     filtered_cells = set(adata.obs_names)
@@ -389,6 +418,7 @@ def stage1_prepare_and_export():
                 umap_df[col] = adata.obs[col].iloc[idx].values
         write_parquet(umap_df, f'{PARQUET_DIR}/umap_subsample.parquet')
     
+    adata.file.close()
     del adata
     gc.collect()
     
@@ -419,40 +449,10 @@ def stage1_prepare_and_export():
     valid_groups = set(group_to_indices.keys())
     pb_meta = pb_meta[pb_meta['sample_id'].isin(valid_groups)].reset_index(drop=True)
     
-    # Pseudobulk aggregation - process in chunks to avoid memory issues
-    print(f"\n4. Computing pseudobulk (chunked)...")
-    
-    CHUNK_SIZE = 5000  # genes per chunk
-    n_chunks = (n_genes + CHUNK_SIZE - 1) // CHUNK_SIZE
-    
-    # Initialize output array
-    pb_counts = np.zeros((len(pb_meta), n_genes), dtype=np.float32)
-    
-    for chunk_idx in range(n_chunks):
-        start_gene = chunk_idx * CHUNK_SIZE
-        end_gene = min((chunk_idx + 1) * CHUNK_SIZE, n_genes)
-        
-        print(f"   Chunk {chunk_idx+1}/{n_chunks}: genes {start_gene}-{end_gene}")
-        
-        # Load this chunk of genes for ALL cells (backed mode reads on demand)
-        # We need to read slices carefully
-        chunk_data = adata_full.X[:, start_gene:end_gene]
-        if sparse.issparse(chunk_data):
-            chunk_data = chunk_data.tocsr()
-        
-        # Aggregate for each group
-        for i, row in pb_meta.iterrows():
-            group = row['sample_id']
-            if group in group_to_indices:
-                indices = group_to_indices[group]
-                if sparse.issparse(chunk_data):
-                    group_sum = np.asarray(chunk_data[indices, :].sum(axis=0)).ravel()
-                else:
-                    group_sum = chunk_data[indices, :].sum(axis=0)
-                pb_counts[i, start_gene:end_gene] = group_sum
-        
-        del chunk_data
-        gc.collect()
+    # Pseudobulk aggregation: one pass over blocks of cells
+    print(f"\n4. Computing pseudobulk (one pass over the cells)...")
+    pb_counts = pseudobulk_sums(adata_full.X, group_to_indices, list(pb_meta['sample_id']), n_genes)
+    pb_counts = pb_counts.astype(np.float32)
     
     adata_full.file.close()
     del adata_full

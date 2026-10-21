@@ -109,6 +109,22 @@ def concord():
     per_ds.index = per_ds.index.str.replace("dataset: ", "")
     print("  held-out accuracy per dataset (author label hidden, CONCORD prediction compared):")
     print(per_ds.round(3).to_string())
+    low = list(per_ds.index[per_ds["accuracy"] < 0.7])
+    if low:
+        from h5io import read_elem
+        a = pd.read_parquet(f"{CONCORD}/concord_cell_annotations.parquet",
+                            columns=["dataset", "cell_type_supercategory", "concord_label", "holdout"])
+        a = a[a["holdout"] & a["dataset"].astype(str).isin(low)]
+        with h5py.File(f"{PIPE}/sfari_final.h5ad", "r") as f:
+            ids = read_elem(f["obs"][f["obs"].attrs["_index"]])
+            merged = pd.Series(np.asarray(read_elem(f["obs/cell_type_merged"]), dtype=object), index=ids)
+        a = a.assign(author=merged.reindex(a.index).to_numpy())
+        for ds in low:
+            top = (a[a["dataset"].astype(str) == ds].groupby(["author", "cell_type_supercategory", "concord_label"],
+                   observed=True).size().sort_values(ascending=False).head(10))
+            print(f"  {ds}: held-out cells by author label -> harmonised label -> CONCORD prediction")
+            for (au, sup, pred), k in top.items():
+                print(f"    {k:>6,}  {str(au)[:40]:40s} -> {sup:28s} -> {pred}")
     ct = qc[~qc.index.str.startswith("dataset: ") & ~qc.index.isin(["accuracy", "macro avg", "weighted avg"])]
     print("  cell types, lowest F1 first:")
     print(ct[["precision", "recall", "f1-score", "support"]].sort_values("f1-score").round(3).head(12).to_string())

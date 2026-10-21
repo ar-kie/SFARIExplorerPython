@@ -159,11 +159,14 @@ def write_stacked(path, parts, obs, var):
 
 def write_with_obs(src, dst, obs):
     """Copy the h5ad src to dst with a new obs. HDF5 copies the matrices block by block, so they are
-    never loaded. The file is written as <dst>.tmp and renamed when complete."""
+    never loaded. String columns become categoricals as in AnnData.write. The file is written as
+    <dst>.tmp and renamed when complete."""
+    holder = ad.AnnData(obs=obs)
+    holder.strings_to_categoricals()
     tmp = f"{dst}.tmp"
     with h5py.File(src, "r") as fs, h5py.File(tmp, "w") as fd:
         for k, v in fs.attrs.items(): fd.attrs[k] = v
         for k in fs:
             if k != "obs": fs.copy(fs[k], fd, name=k)
-        write_elem(fd, "obs", obs)
+        write_elem(fd, "obs", holder.obs)
     os.replace(tmp, dst)

@@ -13,6 +13,7 @@ import re
 import numpy as np
 import pandas as pd
 import anndata as ad
+import h5io
 import gc
 
 # =============================================================================
@@ -37,7 +38,7 @@ print("Adding missing metadata to concatenated h5ad")
 print("=" * 60)
 
 print("\n1. Loading h5ad file...")
-adata = ad.read_h5ad(INPUT_H5AD)
+adata = ad.read_h5ad(INPUT_H5AD, backed='r')  # obs in memory; the count matrix stays on disk
 print(f"   Shape: {adata.shape}")
 
 # Initialize new columns
@@ -397,7 +398,8 @@ for col in adata.obs.columns:
             pass
 
 print(f"  Saving to {OUTPUT_H5AD}...")
-adata.write(OUTPUT_H5AD)
+adata.file.close()
+h5io.write_with_obs(INPUT_H5AD, OUTPUT_H5AD, adata.obs)  # HDF5 copies the matrices, obs is replaced
 
 print("\nDone!")
 print(f"Output: {OUTPUT_H5AD}")

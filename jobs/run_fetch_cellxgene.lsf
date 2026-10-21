@@ -5,6 +5,7 @@
 #BSUB -P acc_ad-omics
 #BSUB -q premium
 #BSUB -n 4
+#BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=64000]"
 #BSUB -W 48:00
 #

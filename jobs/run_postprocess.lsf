@@ -5,6 +5,7 @@
 #BSUB -P acc_ad-omics
 #BSUB -q premium
 #BSUB -n 4
+#BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=64000]"
 #BSUB -W 48:00
 #
@@ -18,6 +19,9 @@
 #   STEPS="ages correct app" bsub < jobs/run_postprocess.lsf
 # The long-format parquets of prep_sfari_data_v5.py --stage 2 (not used by the app) run with STEPS=parquets.
 # Environments: CONDA_ENV (Python, envs/concord.yml) and R_ENV (R, envs/r_correction.yml), names or paths.
+# Memory is per slot (4 x 64 GB) and the slots must be on one host (span[hosts=1]); without it a process
+# could use only its own slot's 64 GB. The scripts read cell metadata only; the count matrices are
+# streamed (pseudobulk) or copied by HDF5.
 #
 # Submit from the repository root:  bsub < jobs/run_postprocess.lsf
 

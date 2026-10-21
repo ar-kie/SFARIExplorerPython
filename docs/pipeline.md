@@ -67,7 +67,7 @@ columns to `DATASET_SAMPLE_COL` / `DATASET_TIME_COL` in `prep_sfari_data_v8.py` 
 | | Before (scVI/scANVI) | Now (CONCORD 1.0.13) |
 |---|---|---|
 | Batch | `batch_key='dataset'` | `domain_key='dataset'`, dataset-aware minibatches (`p_intra_domain=1`) |
-| Features | HVGs | seurat_v3 HVGs (batch = dataset) among orthologs detected in every species |
+| Features | HVGs | seurat_v3 HVGs (batch = dataset) among orthologs detected in human, mouse and zebrafish, plus 67 canonical lineage markers (`CANONICAL_MARKERS`) |
 | Labels | scANVI, unlabelled = `Unknown` | CONCORD classifier head, unlabelled = `Unknown`, 10 % held-out evaluation |
 | Latent | `X_scANVI` | `X_concord` (100 dims) |
 | Output | `combined_scanvi_label_transfer.h5ad` | `combined_concord_label_transfer.h5ad` |

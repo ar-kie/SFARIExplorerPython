@@ -24,9 +24,13 @@ prep_sfari_data_v5.py / v8.py).
 
 Design choices
   * Features: highly variable genes (seurat_v3, batch = dataset) chosen among genes that
-    are detected in every species. Gene symbols are human orthologs, so this restricts the
-    embedding to conserved orthologs and keeps "gene absent in species X" from driving
-    the species separation.
+    are detected in every vertebrate species (--filter-species; gene symbols are human
+    orthologs, so this keeps "gene absent in species X" from driving species separation),
+    plus a panel of canonical lineage markers (CANONICAL_MARKERS). Drosophila is left out of
+    the filter: few vertebrate cell-type markers have a one-to-one fly ortholog, and requiring
+    fly detection removed e.g. GAD1, LHX6, ADARB2, SLC17A7 and SATB2, so the GABAergic subclasses
+    of Nascimento (2024) a were transferred as excitatory neurons. Fly cells are embedded
+    through the conserved genes they express.
   * Normalisation: library size over ALL genes (not only the selected features), scaled
     to 1e4, log1p. Raw counts of the selected features are kept for downstream pseudobulk.
   * Domain: dataset (as for scVI). Species are confounded with dataset, so species are
@@ -82,6 +86,25 @@ LABEL_COL = 'cell_type_supercategory'      # harmonised author labels from step 
 UNLABELED = 'Unknown'
 
 ORGANOID_DATASETS = ['He (2024)', 'Wang (2022)']
+
+# Always among the features when detected (>= --min-species-frac in at least one species): the genes
+# that separate the harmonised cell classes, whether or not they rank as highly variable.
+CANONICAL_MARKERS = [
+    # GABAergic and their origins (MGE: LHX6; CGE: ADARB2)
+    'GAD1', 'GAD2', 'SLC32A1', 'SLC6A1', 'DLX1', 'DLX2', 'DLX5', 'DLX6', 'LHX6', 'ADARB2', 'SST', 'VIP',
+    'PVALB', 'LAMP5', 'SNCG', 'CALB2', 'RELN',
+    # glutamatergic
+    'SLC17A7', 'SLC17A6', 'NEUROD2', 'NEUROD6', 'TBR1', 'SATB2', 'BCL11B', 'FEZF2', 'EMX1',
+    # progenitors, immature neurons
+    'SOX2', 'PAX6', 'HES1', 'HOPX', 'EOMES', 'MKI67', 'TOP2A', 'ASCL1', 'DCX', 'STMN2', 'SOX11',
+    # monoaminergic
+    'TH', 'SLC6A3', 'TPH2', 'SLC6A4', 'DBH',
+    # glia
+    'GFAP', 'AQP4', 'SLC1A3', 'ALDH1L1', 'OLIG1', 'OLIG2', 'PDGFRA', 'MBP', 'PLP1', 'MOG', 'MPZ', 'PMP22',
+    # immune, vascular, mesenchymal, ependymal / choroid plexus, erythroid
+    'CX3CR1', 'P2RY12', 'AIF1', 'PTPRC', 'CLDN5', 'PECAM1', 'FLT1', 'PDGFRB', 'COL1A2', 'FOXJ1', 'TTR',
+    'HBB', 'HBA1',
+]
 
 # Datasets added with pipeline/cellxgene/fetch_cellxgene.py (data/cellxgene/registry.json)
 from dataset_registry import extend_dataset_maps  # noqa: E402
@@ -346,7 +369,11 @@ def main():
     p.add_argument('--outdir', default=OUTPUT_DIR, help='model, QC tables and provenance')
     p.add_argument('--n-features', type=int, default=4000)
     p.add_argument('--min-species-frac', type=float, default=0.005,
-                   help='candidate genes must be detected in at least this fraction of cells of every species')
+                   help='candidate genes must be detected in at least this fraction of cells of each filter species')
+    p.add_argument('--filter-species', default='Human,Mouse,Zebrafish',
+                   help='species in which candidate genes must be detected (comma-separated; all if none present)')
+    p.add_argument('--no-markers', dest='markers', action='store_false',
+                   help='do not add the canonical lineage markers to the highly variable genes')
     p.add_argument('--hvg-cells', type=int, default=500_000, help='subsample size for feature selection')
     p.add_argument('--latent-dim', type=int, default=100)
     p.add_argument('--n-epochs', type=int, default=15)
@@ -395,12 +422,18 @@ def main():
     libsize, det_frac = scan_counts(adata_b, obs[SPECIES_COL].astype(str), args.chunk)
     det_frac.T.to_parquet(Path(args.outdir) / 'gene_detection_by_species.parquet')
 
-    # 2. Features: HVGs among orthologs detected in every species ----------------
-    shared = det_frac.columns[(det_frac >= args.min_species_frac).all(axis=0)]
-    log(f"2. Candidate genes detected in >= {args.min_species_frac:.1%} of cells of every species: "
+    # 2. Features: HVGs among orthologs detected in every vertebrate species, plus canonical markers --
+    filt = [s for s in args.filter_species.split(',') if s in det_frac.index] or list(det_frac.index)
+    shared = det_frac.columns[(det_frac.loc[filt] >= args.min_species_frac).all(axis=0)]
+    log(f"2. Candidate genes detected in >= {args.min_species_frac:.1%} of cells of {', '.join(filt)}: "
         f"{len(shared):,} / {adata_b.n_vars:,}")
     features = select_features(adata_b, obs, list(shared), args, rng)
-    log(f"   Selected {len(features):,} features")
+    added = []
+    if args.markers:
+        detected = det_frac.columns[(det_frac >= args.min_species_frac).any(axis=0)]
+        added = [g for g in CANONICAL_MARKERS if g in set(detected) and g not in set(features)]
+        features = features + added
+    log(f"   Selected {len(features):,} features ({len(added)} canonical markers added: {', '.join(added)})")
     pd.Series(features, name='gene').to_csv(Path(args.outdir) / 'concord_features.csv', index=False)
     feat_idx = adata_b.var_names.get_indexer(features)
 
@@ -522,7 +555,8 @@ def main():
             'domain_key': DATASET_COL,
             'n_features': len(features),
             'feature_selection': (f"seurat_v3 HVGs (batch = {DATASET_COL}) among genes detected in "
-                                  f">= {args.min_species_frac:.1%} of cells of every species"),
+                                  f">= {args.min_species_frac:.1%} of cells of {', '.join(filt)}"
+                                  + (f", plus {len(added)} canonical lineage markers" if added else "")),
             'latent_dim': args.latent_dim,
             'n_epochs': args.n_epochs,
             'batch_size': args.batch_size,

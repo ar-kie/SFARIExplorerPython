@@ -9,9 +9,9 @@ import h5py, numpy as np, pandas as pd, anndata as ad
 from scipy import sparse
 
 try:  # anndata >= 0.11
-    from anndata.io import read_elem, write_elem
+    from anndata.io import read_elem, sparse_dataset, write_elem
 except ImportError:  # anndata 0.10
-    from anndata.experimental import read_elem, write_elem
+    from anndata.experimental import read_elem, sparse_dataset, write_elem
 
 SCAN_CHUNK = 100_000_000  # entries per block when a matrix has to be scanned
 

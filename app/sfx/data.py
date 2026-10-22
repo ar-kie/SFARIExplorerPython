@@ -173,6 +173,12 @@ def _load_annotations(path: Path) -> pd.DataFrame:
     return df.drop_duplicates("gene").set_index("gene")
 
 
+def undated_datasets(atlas: "Atlas") -> list:
+    """Datasets in the atlas without any time-resolved group (no usable age metadata)."""
+    dated = set(atlas.tgroups["dataset"].astype(str)) if atlas.tgroups is not None else set()
+    return sorted(set(atlas.datasets["Dataset"].astype(str)) - dated)
+
+
 def _references(d: Path) -> dict:
     """Built-in references plus data/dataset_references.json (written by the CELLxGENE fetcher)."""
     refs = dict(C.DATASET_REFS)

@@ -72,13 +72,19 @@ def empty(message: str, height: int = 260) -> go.Figure:
 # ---------------------------------------------------------------------------
 
 def dataset_styles(datasets: pd.DataFrame) -> dict:
-    """dataset -> {color, symbol}; slots assigned per species in a fixed order."""
+    """dataset -> {color, symbol}; slots assigned per species in a fixed order.
+
+    Colour and symbol together identify a dataset: the symbol shifts by one with every round
+    through the colours, so the (colour, symbol) pairs stay unique for up to 64 datasets per
+    species while the first eight keep matching colour and symbol slots.
+    """
     styles = {}
+    nc, ns = len(C.DATASET_SLOTS), len(C.DATASET_SYMBOLS)
     for sp in C.SPECIES_ORDER:
         sub = datasets[datasets["Species"] == sp]
         for i, (ds, stype) in enumerate(zip(sub["Dataset"], sub["Sample type"])):
-            symbol = C.DATASET_SYMBOLS[i % len(C.DATASET_SYMBOLS)]
-            styles[ds] = dict(color=C.DATASET_SLOTS[i % len(C.DATASET_SLOTS)],
+            symbol = C.DATASET_SYMBOLS[(i % nc + i // nc) % ns]
+            styles[ds] = dict(color=C.DATASET_SLOTS[i % nc],
                               symbol=symbol + ("-open" if stype == "organoid" else ""),
                               organoid=stype == "organoid")
     return styles
@@ -174,6 +180,14 @@ def trend_at(x, y, w, grid) -> np.ndarray:
     return out
 
 
+def _time_range(*series) -> list:
+    """x range of the relative time axis: 0 to 1.5, extended to the oldest sampled age."""
+    vals = np.concatenate([np.asarray(s, float).ravel() for s in series] or [np.array([])])
+    vals = vals[np.isfinite(vals)]
+    hi = max(1.5, float(vals.max()) if len(vals) else 1.5)
+    return [-0.02, hi + 0.03 if hi > 1.5 else 1.5]
+
+
 def _add_time_anchors(fig, rows_cols, rel=True, birth=None):
     """Hairlines at the anchors of the relative time scale (or native birth)."""
     xs = [(0.45, "birth/hatching"), (1.0, "maturity")] if rel else ([(birth, "birth")] if birth else [])
@@ -223,7 +237,8 @@ def fig_timeline(tgroups: pd.DataFrame, datasets: pd.DataFrame) -> go.Figure:
                            font=dict(size=10, color=C.INK_MUTED))
     fig.update_layout(template=TEMPLATE, height=90 + 26 * len(labels),
                       margin=dict(t=40, l=10),
-                      xaxis=dict(title="Relative developmental time (0 = fertilization)", range=[-0.02, 1.5]),
+                      xaxis=dict(title="Relative developmental time (0 = fertilization)",
+                                 range=_time_range(tgroups["relative_dev_time"].dropna())),
                       yaxis=dict(autorange="reversed", showgrid=False, title=None),
                       legend=dict(orientation="h", y=-0.22, x=0, title=None))
     return fig
@@ -390,7 +405,7 @@ def _trajectory_layout(fig, cts, ncols, nrows, value_label, zero_line=True):
             fig.add_hline(y=0, line=dict(color=C.AXIS, width=1), layer="below", row=i // ncols + 1, col=i % ncols + 1)
     for ann in list(fig.layout.annotations)[:len(cts)]:
         ann.font = dict(size=12, color=C.INK)
-    fig.update_xaxes(range=[-0.02, 1.5], showgrid=False)
+    fig.update_xaxes(range=_time_range(*[t.x for t in fig.data if t.x is not None]), showgrid=False)
     fig.update_xaxes(title_text="Relative developmental time", row=nrows)
     fig.update_yaxes(title_text=value_label, col=1)
     fig.update_layout(template=TEMPLATE, height=110 + 260 * nrows,
@@ -849,7 +864,8 @@ def trajectory_agreement(tdf: pd.DataFrame, value: str, ga: str, gb: str, step: 
     >= ``min_ages`` distinct ages of each group. Trend points are not independent, so r is descriptive
     (no p-value). ``tdf`` needs a ``grp`` column (species group) and one row per dataset x cell type x age.
     """
-    grid = np.round(np.arange(0.0, 1.6 + step / 2, step), 6)
+    top = max(1.6, float(tdf["relative_dev_time"].max()) if len(tdf) else 1.6)
+    grid = np.round(np.arange(0.0, top + step / 2, step), 6)
     rows, curves = [], {}
     for ct, sub in tdf[tdf[value].notna() & tdf["grp"].isin([ga, gb])].groupby("cell_type", observed=True):
         trend, pts = {}, {}
@@ -943,7 +959,8 @@ def fig_pair_trajectories(tdf: pd.DataFrame, value: str, value_label: str, ga: s
     for ann in list(fig.layout.annotations):
         if ann.text:  # subplot titles: left-aligned above each left panel
             ann.update(x=0, xanchor="left", font=dict(size=11, color=C.INK))
-    fig.update_xaxes(range=[-0.02, 1.5], showgrid=False, col=1)
+    fig.update_xaxes(range=_time_range(tdf.loc[tdf["grp"].isin([ga, gb]), "relative_dev_time"]),
+                     showgrid=False, col=1)
     fig.update_xaxes(range=[-1.05, 1.05], showgrid=True, gridcolor=C.GRID, tickvals=[-1, -0.5, 0, 0.5, 1], col=2)
     fig.update_xaxes(title_text="Relative developmental time", row=n, col=1)
     fig.update_xaxes(title_text="r between trends", row=n, col=2)

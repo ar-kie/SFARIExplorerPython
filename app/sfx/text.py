@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import config as C
+from .data import undated_datasets
 
 
 def undetected_fractions(atlas) -> dict:
@@ -28,6 +29,10 @@ def methods_markdown(atlas) -> str:
                      f"{integration.get('n_features', 'n/a')} input features, latent dimension "
                      f"{integration.get('latent_dim', 'n/a')}). Harmonised cell-type labels were transferred to "
                      f"unlabelled cells with {integration.get('label_transfer', 'n/a')}.")
+        if integration.get("feature_selection"):
+            integ_txt += f" Input features: {integration['feature_selection']}."
+        if integration.get("label_filter") and integration["label_filter"] != "none":
+            integ_txt += f" Precision filter: {integration['label_filter']}."
         if integration.get("holdout_accuracy") is not None:
             integ_txt += (f" On author-labelled cells hidden during training, transferred labels agreed with the "
                           f"author labels for {integration['holdout_accuracy']:.1%} of cells.")
@@ -38,6 +43,7 @@ def methods_markdown(atlas) -> str:
                      "to `data/build_info.json`, and it then appears here.")
     absent = {ds: int(atlas.absent[i].sum()) for ds, i in atlas.dataset_index.items()}
     sp_of = dict(zip(atlas.groups["dataset"], atlas.groups["species"]))
+    undated = ", ".join(undated_datasets(atlas)) or "none"
     absent_human = ", ".join(f"{ds} {n:,}" for ds, n in sorted(absent.items(), key=lambda t: -t[1])
                              if sp_of.get(ds) == "Human")
     n_pb = s.get("pseudobulk_samples")
@@ -106,7 +112,7 @@ gene-level annotation layer; the atlas itself is not restricted to SFARI genes.
   (Workman et al., J. Neurosci. 2013) are more appropriate.
 - Known limitations of the age harmonisation in this build: last-menstrual-period ages and post-conception ages
   were not offset-corrected (≈ 2 weeks), birth was placed at 280 days for humans, the Jin (2025) "adult"/"aged"
-  categories map to nominal ages, and Wang (2022) has no age metadata.
+  categories map to nominal ages, and datasets without age metadata ({undated}) appear only in cell-type views.
 - Time-resolved detection is not stored, so masking in time-course views uses the detection rate of the parent
   dataset × cell-type group.
 

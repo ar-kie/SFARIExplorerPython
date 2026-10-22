@@ -62,6 +62,14 @@ def _scaled(df: pd.DataFrame, choice: str, within: list) -> tuple[pd.DataFrame, 
 # Overview
 # ---------------------------------------------------------------------------
 
+def _undated_note(atlas) -> str:
+    undated = D.undated_datasets(atlas)
+    if not undated:
+        return ""
+    return (f" {', '.join(undated)} {'has' if len(undated) == 1 else 'have'} no age metadata and "
+            "appear only in the cell-type views.")
+
+
 def overview(ctx: Ctx):
     a = ctx.atlas
     ds = a.datasets
@@ -87,7 +95,7 @@ def overview(ctx: Ctx):
     st.caption("Each row is one dataset; markers are sampled ages, area ∝ log10(cells). The relative scale is "
                "anchored at fertilisation (0), birth/hatching (0.45) and sexual maturity (1.0) per species. "
                "Organoids are shown open and dotted; they were placed on the fetal segment by culture age, which is "
-               "an approximation (see Methods). Wang (2022) has no age metadata.")
+               "an approximation (see Methods)." + _undated_note(a))
     show(P.fig_timeline(a.tgroups, ds), "timeline")
 
     st.markdown("#### Cell-type composition")

@@ -13,11 +13,11 @@ short_description: Cell-type gene expression across species and development
 
 # SFARIExplorer
 
-Cell-type-resolved gene expression across species and development: 13 single-cell / single-nucleus
-RNA-seq datasets from human (in vivo and organoid), mouse, zebrafish and *Drosophila*, summarised as
-pseudobulk per harmonised cell type and developmental time point. All 17,255 genes are included
-(human symbols; non-human genes mapped to human orthologs). SFARI Gene scores are shown as one
-annotation layer.
+Cell-type-resolved gene expression across species and development: 34 single-cell / single-nucleus
+RNA-seq datasets (14.1 M cells) from human (in vivo and organoid), mouse, zebrafish and *Drosophila*,
+integrated with CONCORD and summarised as pseudobulk per harmonised cell type and developmental time
+point. All 17,383 genes that pass expression filtering are included (human symbols; non-human genes
+mapped to human orthologs). SFARI Gene scores are shown as one annotation layer.
 
 ## Pages
 
@@ -27,7 +27,7 @@ annotation layer.
 | Gene | Where is a gene expressed, how does it change over development, and is its cell-type profile conserved? |
 | Gene set | Heatmap / dot plot of a gene list across datasets and cell types |
 | Development | A gene list over time in one species and cell type; module trajectories across species |
-| Conservation | Spearman correlation of cell-type profiles between species, against a random-gene background |
+| Conservation | Spearman correlation of cell-type profiles between species, against a random-gene background; two species compared cell type by cell type over developmental time |
 | Cell atlas | 2D embedding of a 200k-cell subsample |
 | Data | Tidy tables of the current selection (CSV download) |
 | Methods | Processing, definitions and caveats |
@@ -50,7 +50,7 @@ sfx/data.py         parquet loading and tidy extraction (detection masking, scal
 sfx/plots.py        Plotly figures
 sfx/pages.py        page renderers
 sfx/text.py         methods text
-data/               wide-format parquet build (+ optional build_info.json from integrate_concord.py)
+data/               wide-format parquet build (pipeline/build_app_data.py), build_info.json, dataset_references.json
 ```
 
 ## Run locally

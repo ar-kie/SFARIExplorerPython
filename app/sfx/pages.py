@@ -409,9 +409,13 @@ def _pair_over_time(ctx: Ctx, genes: list, ref: str):
     others = [g for g in groups if g != ga]
     in_vivo = [i for i, g in enumerate(others) if not g.endswith("organoid")]   # default: another species
     gb = c3.selectbox("Compared with", others, index=in_vivo[0] if in_vivo else 0, key="pair_t_b")
-    vchoice = c4.selectbox("Values", ["Δ log2 CPM", "z-score"], key="pair_t_values",
-                           help="Scaled within gene × dataset × cell type across time points, so trajectory "
-                                "shapes are compared, not absolute levels.")
+    value_options = ["Δ log2 CPM", "z-score"] + ([] if what == MODULE_OPTION else ["log2 CPM"])
+    vchoice = c4.selectbox("Values", value_options, key="pair_t_values",
+                           help="Δ log2 CPM and z-scores are centred within each dataset × cell type, which removes "
+                                "dataset offsets but also level differences between datasets that cover different "
+                                "ages. log2 CPM keeps those (datasets were ComBat-corrected within species, "
+                                "preserving age) but also any remaining dataset offsets. r ignores each species' "
+                                "offset and scale either way.")
     within = ["gene", "dataset", "sample_type", "cell_type"]
     if what == MODULE_OPTION:
         sdf, _, label, _ = _scaled(tdf, vchoice, within)
@@ -422,7 +426,8 @@ def _pair_over_time(ctx: Ctx, genes: list, ref: str):
     else:
         sdf, _, label, _ = _scaled(tdf[tdf["gene"] == what], vchoice, within)
         name = what
-    fig, agree = P.fig_pair_trajectories(sdf, "scaled", label, ga, gb, title=f"{name}: {ga} vs {gb}")
+    fig, agree = P.fig_pair_trajectories(sdf, "scaled", label, ga, gb, title=f"{name}: {ga} vs {gb}",
+                                         centered=vchoice != "log2 CPM")
     show(fig, "pair_time")
     no_window = agree.loc[agree["r"].isna(), "cell_type"]
     st.caption(
@@ -430,7 +435,8 @@ def _pair_over_time(ctx: Ctx, genes: list, ref: str):
         "kernel-smoothed trends as on the Gene page, not drawn across unsampled periods; each row has its own "
         "y range (set by the trends, points beyond it are clipped). The grey band is the "
         "window where both species are sampled; r is the Pearson correlation of the two trends inside it "
-        "(rows sorted by r). r compares trajectory shapes on the relative time scale, which aligns species at "
+        "(rows sorted by r). With log2 CPM, the vertical distance between the two species is not interpretable "
+        "(levels are not comparable across species). r compares trajectory shapes on the relative time scale, which aligns species at "
         "birth/hatching (0.45) and maturity (1.0); smoothed trends are autocorrelated, so r is descriptive and "
         "carries no p-value. A cell type needs a shared window of at least 0.15 units with three ages per "
         "species." + (f" No shared window: {', '.join(P._short(c) for c in P._ct_order(no_window))}."

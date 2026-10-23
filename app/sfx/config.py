@@ -61,6 +61,8 @@ DIVERGING = [
     [0.50, "#f0efec"],
     [0.58, "#f4a49b"], [0.70, "#e5675f"], [0.85, "#c0342f"], [1.00, "#8a1c1a"],
 ]
+# log2 CPM heatmaps: light blue (low) - white - firebrick (high); white sits at the median of the shown values
+LOG2CPM_HEATMAP = ("#add8e6", "#ffffff", "#b22222")
 SEQUENTIAL = [
     [0.00, "#f3f7fd"], [0.15, "#cde2fb"], [0.30, "#9ec5f4"], [0.45, "#6da7ec"],
     [0.60, "#3987e5"], [0.75, "#256abf"], [0.88, "#184f95"], [1.00, "#0d366b"],

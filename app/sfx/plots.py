@@ -120,6 +120,20 @@ def _cells_to_size(n, lo=5.0, hi=15.0) -> np.ndarray:
     return lo + (hi - lo) * np.clip(v / 5.0, 0, 1)  # 1 cell -> lo, 100k cells -> hi
 
 
+def _log2cpm_scale(mat):
+    """(colorscale, zmin, zmax, median) for log2 CPM heatmaps: ends at the 2nd/98th percentiles of the
+    shown values, white at their median. The white stop is placed in the scale itself, because Plotly
+    ignores zmid once zmin/zmax are set."""
+    fin = np.asarray(mat, float)
+    fin = fin[np.isfinite(fin)]
+    if not len(fin):
+        return [[0, C.LOG2CPM_HEATMAP[0]], [1, C.LOG2CPM_HEATMAP[2]]], 0.0, 1.0, np.nan
+    lo, hi, mid = np.percentile(fin, 2), np.percentile(fin, 98), float(np.median(fin))
+    p = float(np.clip((mid - lo) / (hi - lo), 0.05, 0.95)) if hi > lo else 0.5
+    low, white, high = C.LOG2CPM_HEATMAP
+    return [[0, low], [p, white], [1, high]], float(lo), float(hi), mid
+
+
 def _diverging_range(values, cap=3.0) -> float:
     v = np.abs(np.asarray(values, float))
     v = v[np.isfinite(v)]
@@ -515,13 +529,13 @@ def fig_heatmap(df: pd.DataFrame, value: str, value_label: str, diverging: bool,
     n_col = len(cols)
     xs = list(range(n_col))
 
+    bar_title = value_label
     if diverging:
         lim = _diverging_range(mat)
         cs, zmin, zmax = C.DIVERGING, -lim, lim
     else:
-        fin = mat[np.isfinite(mat)]
-        cs = C.SEQUENTIAL
-        zmin, zmax = (np.percentile(fin, 2), np.percentile(fin, 98)) if len(fin) else (0, 1)
+        cs, zmin, zmax, mid = _log2cpm_scale(mat)
+        bar_title = f"{value_label}<br>white = median {mid:.1f}" if np.isfinite(mid) else value_label
 
     track_px, row_px = 30, (16 if len(genes) <= 60 else 11)
     heat_px = max(220, row_px * len(genes))
@@ -547,7 +561,7 @@ def fig_heatmap(df: pd.DataFrame, value: str, value_label: str, diverging: bool,
         z=mat, x=xs, y=genes, colorscale=cs, zmin=zmin, zmax=zmax, zmid=0 if diverging else None,
         customdata=custom, xgap=0, ygap=1,
         hovertemplate="<b>%{y}</b><br>%{customdata}<br>" + value_label + ": %{z:.2f}<extra></extra>",
-        colorbar=dict(title=dict(text=value_label, side="right"), thickness=10, len=0.45, y=0.5,
+        colorbar=dict(title=dict(text=bar_title, side="right"), thickness=10, len=0.45, y=0.5,
                       outlinewidth=0, tickfont=dict(size=10))), row=2, col=1)
     _nan_overlay(fig, mat, xs, genes, row=2, col=1)
 
@@ -694,12 +708,13 @@ def fig_temporal_heatmap(tdf: pd.DataFrame, styles: dict, value: str, value_labe
     for i, ds in enumerate(datasets):
         col = styles.get(ds, {}).get("color", C.INK_MUTED)
         ds_scale += [[i / len(datasets), col], [(i + 1) / len(datasets), col]]
+    bar_title = value_label
     if diverging:
         lim = _diverging_range(mat)
         cs, zmin, zmax = C.DIVERGING, -lim, lim
     else:
-        fin = mat[np.isfinite(mat)]
-        cs, (zmin, zmax) = C.SEQUENTIAL, ((np.percentile(fin, 2), np.percentile(fin, 98)) if len(fin) else (0, 1))
+        cs, zmin, zmax, mid = _log2cpm_scale(mat)
+        bar_title = f"{value_label}<br>white = median {mid:.1f}" if np.isfinite(mid) else value_label
     heat_px = max(220, 16 * len(genes))
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.006,
                         row_heights=[14 / (14 + heat_px), heat_px / (14 + heat_px)])
@@ -711,7 +726,7 @@ def fig_temporal_heatmap(tdf: pd.DataFrame, styles: dict, value: str, value_labe
     fig.add_trace(go.Heatmap(z=mat, x=xs, y=genes, colorscale=cs, zmin=zmin, zmax=zmax,
                              zmid=0 if diverging else None, ygap=1, customdata=custom,
                              hovertemplate="<b>%{y}</b><br>%{customdata}<br>" + value_label + ": %{z:.2f}<extra></extra>",
-                             colorbar=dict(title=dict(text=value_label, side="right"), thickness=10, len=0.45,
+                             colorbar=dict(title=dict(text=bar_title, side="right"), thickness=10, len=0.45,
                                            outlinewidth=0)), row=2, col=1)
     _nan_overlay(fig, mat, xs, genes, row=2, col=1)
     for ds in datasets:
@@ -893,7 +908,7 @@ def trajectory_agreement(tdf: pd.DataFrame, value: str, ga: str, gb: str, step: 
 
 
 def fig_pair_trajectories(tdf: pd.DataFrame, value: str, value_label: str, ga: str, gb: str,
-                          title: str = "") -> tuple[go.Figure, pd.DataFrame]:
+                          title: str = "", centered: bool = True) -> tuple[go.Figure, pd.DataFrame]:
     """Two species groups per cell type on the relative time scale, with trend agreement per cell type.
 
     Left: dataset x age points and kernel trends of both groups; grey band = window where both are sampled.
@@ -921,9 +936,18 @@ def fig_pair_trajectories(tdf: pd.DataFrame, value: str, value_label: str, ga: s
         r = i + 1
         trend, pts, windows = curves[ct]
         a = ok.iloc[i]
-        # y range per row from both trends (points outside are clipped), at least ±0.5
-        lim = max(0.5, 1.2 * float(np.nanmax(np.abs(np.r_[trend[ga], trend[gb]]))))
-        tick = float(f"{0.7 * lim:.1g}")  # one significant digit, inside the range
+        # y range per row from both trends (points outside are clipped): symmetric (at least ±0.5) for
+        # centred values, otherwise the trends' span padded by 10 % (at least 0.25)
+        tv = np.r_[trend[ga], trend[gb]]
+        tv = tv[np.isfinite(tv)]
+        if centered:
+            lim = max(0.5, 1.2 * float(np.abs(tv).max()))
+            tick = float(f"{0.7 * lim:.1g}")  # one significant digit, inside the range
+            yrange, yticks = [-lim, lim], [-tick, 0, tick]
+        else:
+            lo, hi = float(tv.min()), float(tv.max())
+            pad = max(0.25, 0.1 * (hi - lo))
+            yrange, yticks = [lo - pad, hi + pad], list(np.round(np.linspace(lo, hi, 3), 1))
         for g in (ga, gb):
             st_, p = style[g], pts[g]
             fig.add_trace(go.Scatter(
@@ -950,10 +974,11 @@ def fig_pair_trajectories(tdf: pd.DataFrame, value: str, value_label: str, ga: s
                            f"{gb} {int(a['ages_b'])}<extra></extra>")), row=r, col=2)
         for x0, x1 in windows:  # after the traces: Plotly skips shapes on panels that are still empty
             fig.add_vrect(x0=x0, x1=x1, fillcolor=C.GRID, opacity=1, line_width=0, layer="below", row=r, col=1)
-        fig.update_yaxes(range=[-lim, lim], tickvals=[-tick, 0, tick], row=r, col=1, showgrid=False,
+        fig.update_yaxes(range=yrange, tickvals=yticks, row=r, col=1, showgrid=False,
                          zeroline=False, ticks="outside")
         fig.update_yaxes(visible=False, range=[-1, 1.6], row=r, col=2)
-        fig.add_hline(y=0, line=dict(color=C.AXIS, width=1), layer="below", row=r, col=1)
+        if centered:
+            fig.add_hline(y=0, line=dict(color=C.AXIS, width=1), layer="below", row=r, col=1)
         fig.add_vline(x=0, line=dict(color=C.AXIS, width=1), layer="below", row=r, col=2)
     _add_time_anchors(fig, [(i + 1, 1) for i in range(n)])
     for ann in list(fig.layout.annotations):

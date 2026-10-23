@@ -99,8 +99,8 @@ def overview(ctx: Ctx):
     show(P.fig_timeline(a.tgroups, ds), "timeline")
 
     st.markdown("#### Cell-type composition")
-    st.caption("Cells per dataset and harmonised cell type (log scale). Labels in non-vertebrate data come from "
-               "label transfer and do not imply homology (see Methods).")
+    st.caption("Cells per dataset and harmonised cell type (log scale); grey: no cells. Labels in non-vertebrate "
+               "data come from label transfer and do not imply homology (see Methods).")
     show(P.fig_composition(a.groups), "composition")
 
     if a.stage_mapping is not None:

@@ -120,18 +120,20 @@ def _cells_to_size(n, lo=5.0, hi=15.0) -> np.ndarray:
     return lo + (hi - lo) * np.clip(v / 5.0, 0, 1)  # 1 cell -> lo, 100k cells -> hi
 
 
-def _log2cpm_scale(mat):
-    """(colorscale, zmin, zmax, median) for log2 CPM heatmaps: ends at the 2nd/98th percentiles of the
-    shown values, white at their median. The white stop is placed in the scale itself, because Plotly
-    ignores zmid once zmin/zmax are set."""
-    fin = np.asarray(mat, float)
+def _level_scale(values, lo=None, hi=None):
+    """(colorscale, min, max, median) for levels (log2 CPM, cell counts): ends at the 2nd/98th percentiles
+    of the shown values unless given, white at their median. The white stop is placed in the scale
+    itself, because Plotly ignores zmid / cmid once the range is set."""
+    fin = np.asarray(values, float)
     fin = fin[np.isfinite(fin)]
+    low, white, high = C.LEVEL_SCALE
     if not len(fin):
-        return [[0, C.LOG2CPM_HEATMAP[0]], [1, C.LOG2CPM_HEATMAP[2]]], 0.0, 1.0, np.nan
-    lo, hi, mid = np.percentile(fin, 2), np.percentile(fin, 98), float(np.median(fin))
+        return [[0, low], [1, high]], 0.0, 1.0, np.nan
+    lo = float(np.percentile(fin, 2)) if lo is None else lo
+    hi = float(np.percentile(fin, 98)) if hi is None else hi
+    mid = float(np.median(fin))
     p = float(np.clip((mid - lo) / (hi - lo), 0.05, 0.95)) if hi > lo else 0.5
-    low, white, high = C.LOG2CPM_HEATMAP
-    return [[0, low], [p, white], [1, high]], float(lo), float(hi), mid
+    return [[0, low], [p, white], [1, high]], lo, hi, mid
 
 
 def _diverging_range(values, cap=3.0) -> float:
@@ -267,16 +269,19 @@ def fig_composition(groups: pd.DataFrame) -> go.Figure:
     piv = g.pivot_table(index="row", columns="cell_type", values="n_cells", aggfunc="sum").reindex(index=rows, columns=cols)
     z = np.log10(piv.to_numpy(float))
     ticks = [1, 10, 100, 1_000, 10_000, 100_000]
+    cs, _, _, mid = _level_scale(z, 0.0, 5.5)
     fig = go.Figure(go.Heatmap(
-        z=z, x=[_short(c) for c in cols], y=rows, colorscale=C.SEQUENTIAL, zmin=0, zmax=5.5,
+        z=z, x=[_short(c) for c in cols], y=rows, colorscale=cs, zmin=0, zmax=5.5,
         xgap=1, ygap=1, customdata=piv.to_numpy(float),
         hovertemplate="%{y}<br>%{x}<br>%{customdata:,.0f} cells<extra></extra>",
-        colorbar=dict(title=dict(text="cells", side="right"), tickvals=np.log10(ticks),
+        colorbar=dict(title=dict(text=f"cells<br>white = median {10 ** mid:,.0f}" if np.isfinite(mid) else "cells",
+                                 side="right"), tickvals=np.log10(ticks),
                       ticktext=["1", "10", "100", "1k", "10k", "100k"], thickness=10, len=0.6, outlinewidth=0)))
+    # empty cells (no cells of that type) show the grey background, not the white of the median
     fig.update_layout(template=TEMPLATE, height=120 + 24 * len(rows), margin=dict(t=24, l=10, b=10),
                       xaxis=dict(side="top", tickangle=-45, showline=False, ticks=""),
                       yaxis=dict(autorange="reversed", showgrid=False, showline=False, ticks=""),
-                      plot_bgcolor="#f7f7f5")
+                      plot_bgcolor=C.GRID)
     return fig
 
 
@@ -534,7 +539,7 @@ def fig_heatmap(df: pd.DataFrame, value: str, value_label: str, diverging: bool,
         lim = _diverging_range(mat)
         cs, zmin, zmax = C.DIVERGING, -lim, lim
     else:
-        cs, zmin, zmax, mid = _log2cpm_scale(mat)
+        cs, zmin, zmax, mid = _level_scale(mat)
         bar_title = f"{value_label}<br>white = median {mid:.1f}" if np.isfinite(mid) else value_label
 
     track_px, row_px = 30, (16 if len(genes) <= 60 else 11)
@@ -638,13 +643,13 @@ def fig_dotplot(prof: pd.DataFrame, value_label: str, diverging: bool) -> go.Fig
     fig = make_subplots(rows=1, cols=len(groups), shared_yaxes=True, horizontal_spacing=0.012,
                         column_widths=[w / sum(widths) for w in widths], subplot_titles=groups)
     vals = p["value"].to_numpy(float)
+    bar_title = value_label
     if diverging:
         lim = _diverging_range(vals)
         cs, cmin, cmax = C.DIVERGING, -lim, lim
     else:
-        fin = vals[np.isfinite(vals)]
-        cs = C.SEQUENTIAL
-        cmin, cmax = (np.percentile(fin, 2), np.percentile(fin, 98)) if len(fin) else (0, 1)
+        cs, cmin, cmax, mid = _level_scale(vals)
+        bar_title = f"{value_label}<br>white = median {mid:.1f}" if np.isfinite(mid) else value_label
     for i, grp in enumerate(groups, start=1):
         sub = p[(p["grp"] == grp)]
         cts = _ct_order(sub["cell_type"])
@@ -653,9 +658,9 @@ def fig_dotplot(prof: pd.DataFrame, value_label: str, diverging: bool) -> go.Fig
         fig.add_trace(go.Scatter(
             x=has["x"], y=has["gene"], mode="markers", showlegend=False,
             marker=dict(size=3 + 15 * np.sqrt(has["detection"].clip(0, 1).fillna(0)), color=has["value"],
-                        colorscale=cs, cmin=cmin, cmax=cmax, line=dict(width=0.5, color="white"),
+                        colorscale=cs, cmin=cmin, cmax=cmax, line=dict(width=0.6, color=C.AXIS),  # white dots stay visible
                         showscale=(i == 1),
-                        colorbar=dict(title=dict(text=value_label, side="right"), thickness=10, len=0.4,
+                        colorbar=dict(title=dict(text=bar_title, side="right"), thickness=10, len=0.4,
                                       y=0.75, outlinewidth=0, tickfont=dict(size=10))),
             customdata=np.c_[has["cell_type"], has["detection"], has["n_datasets"], has["n_cells"]],
             hovertemplate=(f"<b>%{{y}}</b> · {grp}<br>%{{customdata[0]}}<br>{value_label}: %{{marker.color:.2f}}"
@@ -713,7 +718,7 @@ def fig_temporal_heatmap(tdf: pd.DataFrame, styles: dict, value: str, value_labe
         lim = _diverging_range(mat)
         cs, zmin, zmax = C.DIVERGING, -lim, lim
     else:
-        cs, zmin, zmax, mid = _log2cpm_scale(mat)
+        cs, zmin, zmax, mid = _level_scale(mat)
         bar_title = f"{value_label}<br>white = median {mid:.1f}" if np.isfinite(mid) else value_label
     heat_px = max(220, 16 * len(genes))
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.006,

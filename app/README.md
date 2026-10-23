@@ -38,8 +38,9 @@ mapped to human orthologs). SFARI Gene scores are shown as one annotation layer.
   across species directly (cross-species views use Δ log2 CPM, z-scores or rank correlations).
 - Groups where a gene is not detected (no counts in any pseudobulk replicate) are hidden by default
   instead of being shown with voom's floor value; genes absent from a dataset's count matrix are flagged.
-- Colours: species palette validated for colour-vision deficiency; diverging blue–grey–red for scaled
-  values, single-hue blue for log2 CPM. Figures download as SVG from the chart toolbar.
+- Colours: species palette validated for colour-vision deficiency; every continuous scale runs light blue –
+  white – firebrick (white at 0 for scaled values and correlations, at the median of the shown values for
+  log2 CPM and cell counts). Figures download as SVG from the chart toolbar.
 
 ## Layout
 
